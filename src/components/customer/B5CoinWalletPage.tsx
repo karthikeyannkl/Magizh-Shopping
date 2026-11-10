@@ -13,9 +13,12 @@ import {
   AlertCircle,
   HelpCircle,
   Calendar,
+  XCircle,
+  FileText,
+  Info,
 } from 'lucide-react';
 import { StorageService, subscribe } from '../../services/storage';
-import { B5CoinAccount, B5Transaction, CoinRuleConfig, User } from '../../types';
+import { B5CoinAccount, B5Transaction, CoinRuleConfig, User, ManualCoinRequest } from '../../types';
 
 interface B5CoinWalletPageProps {
   onStartShopping: () => void;
@@ -35,13 +38,49 @@ export const B5CoinWalletPage: React.FC<B5CoinWalletPageProps> = ({
   );
   const [rules, setRules] = useState<CoinRuleConfig>(StorageService.getCoinRules());
   
-  // Manual Coin Credit Request Modal
+  // Manual Coin Credit Requests & Form State
+  const [customerRequests, setCustomerRequests] = useState<ManualCoinRequest[]>(() => {
+    return StorageService.getManualCoinRequests().filter(
+      (r) => r.customerId === currentUser.id || r.customerPhone === currentUser.mobile
+    );
+  });
   const [showRequestModal, setShowRequestModal] = useState(false);
-  const [requestCoins, setRequestCoins] = useState(100);
+  const [reqName, setReqName] = useState(currentUser.name || '');
+  const [reqPhone, setReqPhone] = useState(currentUser.mobile || '');
+  const [reqEmail, setReqEmail] = useState(currentUser.email || '');
+  const [reqB5Id, setReqB5Id] = useState('');
+  const [requestCoins, setRequestCoins] = useState(50);
   const [requestReason, setRequestReason] = useState('');
   const [requestNotice, setRequestNotice] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const loadRequests = () => {
+    // Try backend API first, fall back to localStorage
+    if (currentUser.id) {
+      fetch(`/api/customer/coin-requests?customerId=${encodeURIComponent(currentUser.id)}`)
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.success && Array.isArray(data.requests)) {
+            setCustomerRequests(data.requests);
+          } else {
+            const local = StorageService.getManualCoinRequests().filter(
+              (r) => r.customerId === currentUser.id || r.customerPhone === currentUser.mobile
+            );
+            setCustomerRequests(local);
+          }
+        })
+        .catch(() => {
+          const local = StorageService.getManualCoinRequests().filter(
+            (r) => r.customerId === currentUser.id || r.customerPhone === currentUser.mobile
+          );
+          setCustomerRequests(local);
+        });
+    }
+  };
 
   useEffect(() => {
+    loadRequests();
+
     const unsubCoin = subscribe('coinAccountChanged', () => {
       setCoinAccount(StorageService.getCoinAccount(currentUser.id));
     });
@@ -51,31 +90,47 @@ export const B5CoinWalletPage: React.FC<B5CoinWalletPageProps> = ({
     const unsubRules = subscribe('coinRulesChanged', (newRules: CoinRuleConfig) => {
       setRules(newRules);
     });
+    const unsubRequests = subscribe('manualCoinRequestsChanged', () => {
+      loadRequests();
+    });
 
     return () => {
       unsubCoin();
       unsubTx();
       unsubRules();
+      unsubRequests();
     };
   }, [currentUser.id]);
 
-  const handleManualRequest = (e: React.FormEvent) => {
+  const handleManualRequest = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!requestReason) return;
+    if (!requestReason.trim()) return;
+    if (requestCoins <= 0) return;
 
-    StorageService.createManualCoinRequest({
-      customerId: currentUser.id,
-      customerName: currentUser.name,
-      customerPhone: currentUser.mobile,
-      coins: requestCoins,
-      reason: requestReason,
-      requestedBy: currentUser.name,
-    });
+    setIsSubmitting(true);
+    try {
+      StorageService.createManualCoinRequest({
+        customerId: currentUser.id,
+        customerName: reqName.trim() || currentUser.name,
+        customerPhone: reqPhone.trim() || currentUser.mobile,
+        customerEmail: reqEmail.trim() || currentUser.email,
+        b5Id: reqB5Id.trim(),
+        coins: requestCoins,
+        reason: requestReason.trim(),
+        requestedBy: currentUser.name,
+      });
 
-    setShowRequestModal(false);
-    setRequestReason('');
-    setRequestNotice('Manual coin credit request submitted to Admin for approval!');
-    setTimeout(() => setRequestNotice(null), 4000);
+      setShowRequestModal(false);
+      setRequestReason('');
+      setReqB5Id('');
+      setRequestNotice('Coin credit request submitted! Magizh Admin will manually verify and approve.');
+      loadRequests();
+      setTimeout(() => setRequestNotice(null), 5000);
+    } catch (err: any) {
+      alert(err.message || 'Failed to submit request');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const getTxTypeInfo = (type: B5Transaction['type']) => {
@@ -307,60 +362,254 @@ export const B5CoinWalletPage: React.FC<B5CoinWalletPageProps> = ({
         )}
       </div>
 
-      {/* Manual Request Modal */}
+      {/* Customer Coin Credit Requests History (Phase 1) */}
+      <div className="bg-white rounded-3xl border border-cream-300 p-5 shadow-2xs space-y-4">
+        <div className="flex items-center justify-between border-b border-cream-200 pb-3">
+          <div className="flex items-center gap-2">
+            <FileText className="w-5 h-5 text-b5-700" />
+            <div>
+              <h2 className="text-sm font-extrabold text-darkbrown-900">
+                My Coin Credit Requests
+              </h2>
+              <p className="text-[11px] text-gray-500">
+                Manual coin requests submitted for Magizh Administrator approval
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => setShowRequestModal(true)}
+            className="px-3 py-1.5 bg-b5-50 hover:bg-b5-100 text-b5-800 border border-b5-300 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
+          >
+            <Send className="w-3.5 h-3.5" />
+            <span>New Request</span>
+          </button>
+        </div>
+
+        {customerRequests.length === 0 ? (
+          <div className="text-center py-6 text-gray-400 space-y-1">
+            <Coins className="w-8 h-8 mx-auto opacity-30 text-darkbrown-400" />
+            <p className="text-xs">No coin credit requests submitted yet.</p>
+            <p className="text-[11px] text-gray-400">
+              Zero automatic welcome coins are credited. You can submit a manual request anytime.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {customerRequests.map((req) => (
+              <div
+                key={req.id}
+                className="p-3.5 rounded-2xl border border-cream-300 bg-cream-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+              >
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-mono font-bold text-darkbrown-900 bg-white px-2 py-0.5 rounded border border-cream-300">
+                      {req.id}
+                    </span>
+                    <span className="font-black text-amber-800 bg-amber-100 px-2 py-0.5 rounded">
+                      {req.coins} B5 Coins Requested
+                    </span>
+                    {req.status === 'pending' && (
+                      <span className="inline-flex items-center gap-1 font-bold text-amber-800 bg-amber-50 border border-amber-300 px-2 py-0.5 rounded-full text-[10px]">
+                        <Clock className="w-3 h-3 text-amber-600" />
+                        Pending Admin Review
+                      </span>
+                    )}
+                    {req.status === 'approved' && (
+                      <span className="inline-flex items-center gap-1 font-bold text-emerald-800 bg-emerald-50 border border-emerald-300 px-2 py-0.5 rounded-full text-[10px]">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                        Approved (+{req.approvedAmount ?? req.coins} Coins Credited)
+                      </span>
+                    )}
+                    {req.status === 'rejected' && (
+                      <span className="inline-flex items-center gap-1 font-bold text-red-800 bg-red-50 border border-red-300 px-2 py-0.5 rounded-full text-[10px]">
+                        <XCircle className="w-3 h-3 text-red-600" />
+                        Rejected
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-gray-700">
+                    <strong className="text-darkbrown-900">Reason:</strong> {req.reason}
+                  </p>
+                  {req.b5Id && (
+                    <p className="text-[11px] text-gray-500 font-mono">
+                      B5 ID Ref: <span className="font-semibold">{req.b5Id}</span>
+                    </p>
+                  )}
+                  {req.adminNotes && (
+                    <p className="text-[11px] text-gray-600 bg-white/70 p-1.5 rounded-lg border border-cream-200">
+                      <strong className="text-darkbrown-800">Admin Remarks:</strong> {req.adminNotes}
+                    </p>
+                  )}
+                </div>
+
+                <div className="text-left sm:text-right text-[11px] text-gray-400 shrink-0">
+                  <p>Requested: {new Date(req.requestedAt).toLocaleDateString('en-IN')}</p>
+                  {req.resolvedAt && (
+                    <p className="text-gray-500">
+                      Resolved: {new Date(req.resolvedAt).toLocaleDateString('en-IN')}
+                    </p>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Manual Coin Request Modal (Phase 1: Captures all required details) */}
       {showRequestModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-darkbrown-950/60 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-white rounded-3xl shadow-2xl border border-cream-300 w-full max-w-md p-5 space-y-4">
-            <h3 className="text-sm font-extrabold text-darkbrown-900">
-              Request Manual B5 Coin Credit
-            </h3>
-            <p className="text-xs text-gray-500">
-              Admins review and approve manual coin credits for special promotions or goodwill adjustments.
-            </p>
+          <div className="bg-white rounded-3xl shadow-2xl border border-cream-300 w-full max-w-lg p-5 sm:p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="border-b border-cream-200 pb-3">
+              <h3 className="text-base font-extrabold text-darkbrown-900 flex items-center gap-2">
+                <Coins className="w-5 h-5 text-b5-600" />
+                <span>Submit Coin Credit Request</span>
+              </h3>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Magizh Shopping Admin manually reviews and approves coin credits. No automatic welcome coins are issued.
+              </p>
+            </div>
 
-            <form onSubmit={handleManualRequest} className="space-y-3 text-xs">
-              <div>
-                <label className="block font-semibold text-darkbrown-800 mb-1">
-                  Coins to Request
-                </label>
-                <input
-                  type="number"
-                  min={10}
-                  max={1000}
-                  value={requestCoins}
-                  onChange={(e) => setRequestCoins(Number(e.target.value))}
-                  className="w-full p-2 border border-cream-300 rounded-xl font-mono font-bold"
-                  required
-                />
+            <form onSubmit={handleManualRequest} className="space-y-3.5 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* 1. Customer Name */}
+                <div>
+                  <label className="block font-bold text-darkbrown-800 mb-1">
+                    Customer Name <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={reqName}
+                    onChange={(e) => setReqName(e.target.value)}
+                    placeholder="Full Name"
+                    className="w-full p-2.5 border border-cream-300 rounded-xl bg-cream-50/50 font-medium focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-b5-500"
+                    required
+                  />
+                </div>
+
+                {/* 2. Registered Mobile */}
+                <div>
+                  <label className="block font-bold text-darkbrown-800 mb-1">
+                    Registered Mobile <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="tel"
+                    value={reqPhone}
+                    onChange={(e) => setReqPhone(e.target.value)}
+                    placeholder="10-digit mobile number"
+                    pattern="[0-9]{10}"
+                    className="w-full p-2.5 border border-cream-300 rounded-xl bg-cream-50/50 font-mono font-medium focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-b5-500"
+                    required
+                  />
+                </div>
               </div>
 
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* 3. Email */}
+                <div>
+                  <label className="block font-bold text-darkbrown-800 mb-1">
+                    Email Address
+                  </label>
+                  <input
+                    type="email"
+                    value={reqEmail}
+                    onChange={(e) => setReqEmail(e.target.value)}
+                    placeholder="customer@example.com"
+                    className="w-full p-2.5 border border-cream-300 rounded-xl bg-cream-50/50 font-medium focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-b5-500"
+                  />
+                </div>
+
+                {/* 4. B5 ID (Manual Reference Only) */}
+                <div>
+                  <label className="block font-bold text-darkbrown-800 mb-1">
+                    B5 ID (Manual Reference)
+                  </label>
+                  <input
+                    type="text"
+                    value={reqB5Id}
+                    onChange={(e) => setReqB5Id(e.target.value)}
+                    placeholder="e.g. B5-88492"
+                    className="w-full p-2.5 border border-cream-300 rounded-xl bg-cream-50/50 font-mono font-medium focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-b5-500"
+                  />
+                  <span className="text-[10px] text-gray-500 block mt-0.5">
+                    For manual verification by Magizh Admin only. No external API is accessed.
+                  </span>
+                </div>
+              </div>
+
+              {/* 5. Requested Coin Amount */}
               <div>
-                <label className="block font-semibold text-darkbrown-800 mb-1">
-                  Reason / Campaign Justification
+                <label className="block font-bold text-darkbrown-800 mb-1">
+                  Requested Coin Amount (1 Coin = ₹1) <span className="text-red-500">*</span>
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    max={10000}
+                    value={requestCoins}
+                    onChange={(e) => setRequestCoins(Math.max(1, parseInt(e.target.value) || 0))}
+                    className="w-32 p-2.5 border border-cream-300 rounded-xl font-mono font-black text-sm text-b5-800 bg-cream-50/50 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-b5-500"
+                    required
+                  />
+                  <div className="flex gap-1.5">
+                    {[50, 100, 200, 500].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setRequestCoins(preset)}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors ${
+                          requestCoins === preset
+                            ? 'bg-b5-600 text-white border-b5-700'
+                            : 'bg-white hover:bg-cream-100 text-darkbrown-800 border-cream-300'
+                        }`}
+                      >
+                        +{preset}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* 6. Request Reason */}
+              <div>
+                <label className="block font-bold text-darkbrown-800 mb-1">
+                  Reason for Coin Request <span className="text-red-500">*</span>
                 </label>
                 <textarea
                   rows={3}
                   value={requestReason}
                   onChange={(e) => setRequestReason(e.target.value)}
-                  placeholder="e.g. Festival coupon voucher exchange or community event credit"
-                  className="w-full p-2 border border-cream-300 rounded-xl"
+                  placeholder="e.g. Festival goodwill campaign voucher exchange, promotional credit, or community event credit"
+                  className="w-full p-2.5 border border-cream-300 rounded-xl bg-cream-50/50 font-medium focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-b5-500"
                   required
                 />
+              </div>
+
+              {/* Informational note */}
+              <div className="p-3 bg-cream-50 border border-cream-300 rounded-xl flex items-start gap-2 text-[11px] text-gray-600">
+                <Info className="w-4 h-4 text-b5-700 shrink-0 mt-0.5" />
+                <span>
+                  Requests are reviewed by Magizh Shopping Administrators. Once approved, coins are atomically credited to your spendable balance and logged in your transaction ledger.
+                </span>
               </div>
 
               <div className="flex gap-2 pt-2">
                 <button
                   type="button"
                   onClick={() => setShowRequestModal(false)}
-                  className="flex-1 py-2 bg-cream-100 hover:bg-cream-200 text-darkbrown-800 rounded-xl font-semibold"
+                  disabled={isSubmitting}
+                  className="flex-1 py-2.5 bg-cream-100 hover:bg-cream-200 text-darkbrown-800 rounded-xl font-bold transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-2 bg-b5-600 hover:bg-b5-700 text-white rounded-xl font-bold"
+                  disabled={isSubmitting}
+                  className="flex-1 py-2.5 bg-b5-600 hover:bg-b5-700 text-white rounded-xl font-black shadow-sm transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50"
                 >
-                  Submit Request
+                  <Send className="w-3.5 h-3.5" />
+                  <span>{isSubmitting ? 'Submitting...' : 'Submit Request'}</span>
                 </button>
               </div>
             </form>

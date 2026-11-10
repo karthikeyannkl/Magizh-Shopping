@@ -152,7 +152,7 @@ export const RoyalCelebrationModal: React.FC<RoyalCelebrationModalProps> = ({
           </h2>
 
           <p className="text-xs text-emerald-100/90 mt-1 max-w-xs mx-auto">
-            {data.type === 'registration_success' && 'Your Journey Begins with 100 Welcome Coins!'}
+            {data.type === 'registration_success' && 'Your account has been created successfully!'}
             {data.type === 'coin_credit' && 'New reward coins credited to your official Magizh wallet.'}
             {data.type === 'order_success' && 'Your authentic native order has been securely confirmed.'}
             {data.type === 'coin_redemption' && 'Instant discount applied via your B5 Coin reward balance.'}
@@ -164,19 +164,15 @@ export const RoyalCelebrationModal: React.FC<RoyalCelebrationModalProps> = ({
           {/* EVENT 1: Registration Success */}
           {data.type === 'registration_success' && (
             <div className="space-y-4 text-center">
-              <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-2xl p-4">
-                <span className="text-[11px] font-bold text-amber-800 uppercase tracking-wider block">
-                  Welcome Reward Unlocked
+              <div className="bg-gradient-to-r from-emerald-50 to-amber-50 border border-emerald-200 rounded-2xl p-4">
+                <span className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider block">
+                  Pure Traditional Living
                 </span>
-                <div className="flex items-center justify-center gap-2 mt-1">
-                  <Coins className="w-6 h-6 text-amber-600" />
-                  <span className="text-2xl sm:text-3xl font-black text-darkbrown-900">
-                    <AnimatedCounter to={100} durationMs={1000} />
-                  </span>
-                  <span className="text-sm font-extrabold text-amber-700">B5 Coins (₹100)</span>
-                </div>
+                <p className="text-sm font-extrabold text-darkbrown-900 mt-1">
+                  Welcome to Magizh Shopping, {data.customerName || 'Valued Customer'}!
+                </p>
                 <p className="text-xs text-gray-600 mt-1.5">
-                  Redeemable up to 50% on your online orders or at certified Partner shops across Tamil Nadu.
+                  Shop traditional stone-ground spices, cold-pressed oils &amp; millets. Earn B5 Coin rewards on orders or submit a manual coin request anytime.
                 </p>
               </div>
 

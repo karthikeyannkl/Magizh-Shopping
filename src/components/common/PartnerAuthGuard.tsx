@@ -19,7 +19,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { User } from '../../types';
-import { StorageService } from '../../services/storage';
+import { StorageService, subscribe } from '../../services/storage';
 
 interface PartnerAuthGuardProps {
   currentUser: User;
@@ -36,8 +36,18 @@ export const PartnerAuthGuard: React.FC<PartnerAuthGuardProps> = ({
   onNavigateStorefront,
   children,
 }) => {
+  // Independent Partner Portal Session
+  const [partnerUser, setPartnerUser] = useState<User | null>(() => StorageService.getPartnerUser());
+
+  useEffect(() => {
+    const unsub = subscribe('partnerUserChanged', (u: User | null) => {
+      setPartnerUser(u);
+    });
+    return () => unsub();
+  }, []);
+
   // If already authenticated as partner or admin, show Partner Dashboard
-  if (currentUser.role === 'partner' || currentUser.role === 'admin') {
+  if (partnerUser && (partnerUser.role === 'partner' || partnerUser.role === 'admin')) {
     return <>{children}</>;
   }
 
@@ -141,7 +151,8 @@ export const PartnerAuthGuard: React.FC<PartnerAuthGuardProps> = ({
         createdAt: new Date().toISOString(),
       };
 
-      StorageService.setCurrentUser(partnerUser);
+      StorageService.setPartnerUser(partnerUser);
+      setPartnerUser(partnerUser);
       onLoginSuccess(partnerUser);
     } catch (err: any) {
       setLoginError(err.message || 'Network error occurred during partner sign in.');

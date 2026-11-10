@@ -75,7 +75,7 @@ export const getPathFromRoute = (route: string): string => {
 };
 
 export default function App() {
-  const [currentUser, setCurrentUser] = useState<User>(StorageService.getCurrentUser());
+  const [currentUser, setCurrentUser] = useState<User>(() => StorageService.getCustomerUser());
   
   // Initialize route directly from browser URL so refreshing opens the exact route
   const [currentTab, setCurrentTab] = useState<string>(() => {
@@ -133,9 +133,10 @@ export default function App() {
     setGlobalCelebration(null);
   };
 
-  // Sync tab navigation with browser history
+  // Sync tab navigation with browser history & route-aware scroll restoration
   const navigateTo = (tab: string) => {
     setCurrentTab(tab);
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
     const targetPath = getPathFromRoute(tab);
     if (typeof window !== 'undefined' && window.location.pathname !== targetPath) {
       window.history.pushState({ tab }, '', targetPath);
@@ -147,11 +148,17 @@ export default function App() {
     const handlePopState = () => {
       const route = getRouteFromPath(window.location.pathname);
       setCurrentTab(route);
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
     };
 
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
+
+  // Guarantee route-aware scroll restoration on every view/tab change
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+  }, [currentTab]);
 
   // Sync storage subscriptions
   useEffect(() => {
@@ -189,7 +196,8 @@ export default function App() {
   const handleBuyNow = (product: Product, variant: WeightVariant, quantity: number) => {
     handleAddToCart(product, variant, quantity);
     setSelectedProduct(null);
-    navigateTo('checkout');
+    // Buy Now strictly navigates to Cart / Order Review & Coupon stage
+    navigateTo('cart');
   };
 
   const handleProceedToCheckout = (coupon?: Coupon) => {
@@ -208,9 +216,8 @@ export default function App() {
       return (
         <AdminAuthGuard
           currentUser={currentUser}
-          onLoginSuccess={(adminUser) => {
-            setCurrentUser(adminUser);
-            setCoinBalance(StorageService.getCoinAccount(adminUser.id).availableBalance);
+          onLoginSuccess={(_adminUser) => {
+            // Admin portal session is isolated in StorageService.setAdminUser
           }}
           onNavigateStorefront={() => navigateTo('home')}
         >
@@ -224,9 +231,8 @@ export default function App() {
       return (
         <PartnerAuthGuard
           currentUser={currentUser}
-          onLoginSuccess={(partnerUser) => {
-            setCurrentUser(partnerUser);
-            setCoinBalance(StorageService.getCoinAccount(partnerUser.id).availableBalance);
+          onLoginSuccess={(_partnerUser) => {
+            // Partner portal session is isolated in StorageService.setPartnerUser
           }}
           onNavigateStorefront={() => navigateTo('home')}
         >
@@ -315,9 +321,8 @@ export default function App() {
         <AdminHeader
           onNavigateStorefront={() => navigateTo('home')}
           onLogout={() => {
-            StorageService.logout();
-            setCurrentUser(StorageService.getCurrentUser());
-            navigateTo('home');
+            StorageService.adminLogout();
+            navigateTo('admin');
           }}
         />
       )}
@@ -326,9 +331,8 @@ export default function App() {
         <PartnerHeader
           onNavigateStorefront={() => navigateTo('home')}
           onLogout={() => {
-            StorageService.logout();
-            setCurrentUser(StorageService.getCurrentUser());
-            navigateTo('home');
+            StorageService.partnerLogout();
+            navigateTo('partner');
           }}
         />
       )}
@@ -338,7 +342,10 @@ export default function App() {
           currentTab={currentTab}
           onNavigate={(tab) => navigateTo(tab)}
           onOpenAuth={() => setAuthModalOpen(true)}
-          onLogout={() => setCurrentUser(StorageService.getCurrentUser())}
+          onLogout={() => {
+            StorageService.customerLogout();
+            setCurrentUser(StorageService.getCurrentUser());
+          }}
         />
       )}
 
@@ -368,13 +375,14 @@ export default function App() {
         }}
         onRegistrationSuccess={(registeredUser) => {
           setCurrentUser(registeredUser);
-          setCoinBalance(StorageService.getCoinAccount(registeredUser.id).availableBalance);
+          const currentBal = StorageService.getCoinAccount(registeredUser.id).availableBalance;
+          setCoinBalance(currentBal);
           setGlobalCelebration({
             type: 'registration_success',
             customerName: registeredUser.name,
             customerCode: registeredUser.customerCode || 'MAG-CUST',
-            coinsCredited: 100,
-            newBalance: 100,
+            coinsCredited: 0,
+            newBalance: currentBal,
           });
           setIsCelebrationOpen(true);
         }}
@@ -404,8 +412,7 @@ export default function App() {
         <BottomNav
           currentTab={currentTab}
           onNavigate={(tab) => navigateTo(tab)}
-          // Always render customer tabs on customer routes; portal roles stay isolated.
-          role="customer"
+          role={currentUser.role}
           cartCount={cartCount}
           coinBalance={coinBalance}
         />

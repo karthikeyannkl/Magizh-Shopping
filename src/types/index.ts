@@ -248,12 +248,18 @@ export interface ManualCoinRequest {
   customerId: string;
   customerName: string;
   customerPhone: string;
+  customerEmail?: string;
+  b5Id?: string; // Manual reference only for Magizh admin verification
   coins: number;
+  approvedAmount?: number;
   reason: string;
   requestedBy: string;
   requestedAt: string;
   status: 'pending' | 'approved' | 'rejected';
+  adminId?: string;
   adminNotes?: string;
+  previousBalance?: number;
+  newBalance?: number;
   resolvedAt?: string;
 }
 

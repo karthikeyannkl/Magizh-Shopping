@@ -45,54 +45,56 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({
   }, [currentUser.id]);
 
   const handleLogout = () => {
-    StorageService.logout();
+    StorageService.customerLogout();
     setShowProfileMenu(false);
     if (onLogout) onLogout();
     onNavigate('home');
   };
 
   return (
-    <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-cream-300 shadow-xs">
+    <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-cream-300 shadow-xs w-full max-w-full overflow-hidden">
       {/* Top Brand Announcement Bar */}
-      <div className="bg-gradient-to-r from-magizh-900 via-magizh-800 to-darkbrown-900 text-white text-xs px-3 py-1.5 flex items-center justify-between">
-        <div className="flex items-center space-x-2 truncate">
-          <span className="bg-b5-600 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider">
+      <div className="bg-gradient-to-r from-magizh-900 via-magizh-800 to-darkbrown-900 text-white text-xs px-2.5 sm:px-3 py-1 sm:py-1.5 flex items-center justify-between overflow-hidden">
+        <div className="flex items-center space-x-1.5 sm:space-x-2 min-w-0 flex-1 mr-2">
+          <span className="bg-b5-600 px-1.5 py-0.5 rounded text-[9px] sm:text-[10px] font-bold uppercase tracking-wider shrink-0">
             B5 Rewards
           </span>
-          <span className="truncate">Earn up to 5% B5 Coins on all Traditional Millets &amp; Cold-Pressed Oils!</span>
+          <span className="truncate text-[10px] sm:text-xs text-cream-100">
+            Earn up to 5% B5 Coins on all Traditional Millets &amp; Cold-Pressed Oils!
+          </span>
         </div>
-        <div className="flex items-center space-x-3 text-[11px] shrink-0 font-medium">
-          <span className="text-cream-200">1 B5 Coin = ₹1</span>
+        <div className="flex items-center space-x-2 text-[10px] sm:text-[11px] shrink-0 font-medium">
+          <span className="text-cream-200">1 Coin = ₹1</span>
         </div>
       </div>
 
       {/* Main App Bar */}
-      <div className="max-w-7xl mx-auto px-4 py-2.5 flex items-center justify-between gap-3">
+      <div className="max-w-7xl mx-auto px-2.5 sm:px-4 py-2 sm:py-2.5 flex items-center justify-between gap-1.5 sm:gap-3">
         {/* Brand Logo & Name */}
         <div
           onClick={() => onNavigate('home')}
-          className="flex items-center gap-2 cursor-pointer select-none group"
+          className="flex items-center gap-1.5 sm:gap-2 cursor-pointer select-none group min-w-0 shrink"
         >
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-magizh-700 to-magizh-900 flex items-center justify-center text-white font-extrabold shadow-md border border-magizh-600/30 group-hover:scale-105 transition-transform">
-            <span className="text-xl">M</span>
+          <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-magizh-700 to-magizh-900 flex items-center justify-center text-white font-extrabold shadow-md border border-magizh-600/30 group-hover:scale-105 transition-transform shrink-0">
+            <span className="text-lg sm:text-xl">M</span>
           </div>
-          <div>
-            <div className="flex items-center gap-1.5">
-              <span className="font-extrabold text-lg tracking-tight text-magizh-900">
+          <div className="min-w-0">
+            <div className="flex items-center gap-1 sm:gap-1.5">
+              <span className="font-extrabold text-base sm:text-lg tracking-tight text-magizh-900">
                 MAGIZH
               </span>
-              <span className="text-xs uppercase font-bold tracking-widest text-b5-700 bg-b5-100 px-1.5 py-0.5 rounded">
+              <span className="text-[9px] sm:text-xs uppercase font-bold tracking-widest text-b5-700 bg-b5-100 px-1 sm:px-1.5 py-0.5 rounded shrink-0">
                 SHOPPING
               </span>
             </div>
-            <p className="text-[10px] text-darkbrown-700 font-medium -mt-1 tracking-tight">
+            <p className="hidden sm:block text-[10px] text-darkbrown-700 font-medium -mt-1 tracking-tight truncate">
               Pure Natural Living &bull; B5 Coin Ecosystem
             </p>
           </div>
         </div>
 
         {/* Right Navigation & Badges */}
-        <div className="flex items-center gap-2 sm:gap-3">
+        <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
           {/* Partner Shops Directory (Customer Facing) */}
           <button
             onClick={() => onNavigate('partner-shops')}
@@ -107,18 +109,18 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({
             <span>Partner Shops</span>
           </button>
 
-          {/* B5 Coin Wallet Badge (Only when authenticated) */}
+          {/* B5 Coin Wallet Badge */}
           {isLoggedIn ? (
             <button
               onClick={() => onNavigate('wallet')}
-              className="flex items-center gap-1.5 bg-gradient-to-r from-b5-50 to-amber-50 border border-b5-200 hover:border-b5-400 px-2.5 py-1.5 rounded-full shadow-2xs hover:shadow transition-all group"
+              className="flex items-center gap-1 sm:gap-1.5 bg-gradient-to-r from-b5-50 to-amber-50 border border-b5-200 hover:border-b5-400 px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-full shadow-2xs hover:shadow transition-all group shrink-0"
               title="Click to view your B5 Coin Wallet"
             >
-              <div className="w-6 h-6 rounded-full bg-gradient-to-br from-b5-500 to-b5-700 text-white flex items-center justify-center shadow-inner group-hover:rotate-12 transition-transform">
-                <Coins className="w-3.5 h-3.5" />
+              <div className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-gradient-to-br from-b5-500 to-b5-700 text-white flex items-center justify-center shadow-inner group-hover:rotate-12 transition-transform shrink-0">
+                <Coins className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
               </div>
-              <div className="text-left pr-1">
-                <span className="text-[10px] block font-semibold text-b5-800 leading-none">My B5 Coins</span>
+              <div className="text-left pr-0.5 sm:pr-1">
+                <span className="hidden sm:block text-[10px] font-semibold text-b5-800 leading-none">My B5 Coins</span>
                 <span className="text-xs font-black text-b5-700 leading-tight">
                   {coinAccount.availableBalance}
                 </span>
@@ -127,17 +129,17 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({
           ) : (
             <button
               onClick={onOpenAuth}
-              className="hidden sm:flex items-center gap-1 text-[11px] font-bold text-b5-800 bg-b5-50 hover:bg-b5-100 border border-b5-200 px-2.5 py-1.5 rounded-full transition-colors"
+              className="flex items-center gap-1 text-[11px] sm:text-xs font-bold text-magizh-900 bg-magizh-50 hover:bg-magizh-100 border border-magizh-300 px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-full transition-colors shrink-0"
             >
-              <Sparkles className="w-3.5 h-3.5 text-b5-600" />
-              <span>Sign In to Earn B5 Coins</span>
+              <UserIcon className="w-3.5 h-3.5 text-magizh-800" />
+              <span>Sign In</span>
             </button>
           )}
 
           {/* Cart Icon */}
           <button
             onClick={() => onNavigate('cart')}
-            className="relative p-2 text-darkbrown-800 hover:text-magizh-800 hover:bg-cream-200 rounded-full transition-colors"
+            className="relative p-1.5 sm:p-2 text-darkbrown-800 hover:text-magizh-800 hover:bg-cream-200 rounded-full transition-colors shrink-0"
             title="Shopping Cart"
           >
             <ShoppingBag className="w-5 h-5" />
@@ -148,24 +150,23 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({
             )}
           </button>
 
-          {/* Customer Profile / Sign In Button */}
+          {/* Customer Profile / Account Button */}
           {isLoggedIn ? (
-            <div className="relative">
+            <div className="relative shrink-0">
               <button
                 onClick={() => setShowProfileMenu(!showProfileMenu)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all border ${
+                className={`flex items-center gap-1 sm:gap-1.5 p-1.5 sm:px-3 sm:py-1.5 rounded-full text-xs font-bold transition-all border ${
                   currentTab === 'account'
                     ? 'bg-magizh-800 text-white border-magizh-900 shadow-sm'
                     : 'bg-white hover:bg-cream-100 text-darkbrown-900 border-cream-300'
                 }`}
                 title="Customer Profile & Account"
               >
-                <div className="w-4 h-4 rounded-full bg-magizh-100 text-magizh-800 flex items-center justify-center text-[10px] font-extrabold">
+                <div className="w-5 h-5 sm:w-4 sm:h-4 rounded-full bg-magizh-100 text-magizh-800 flex items-center justify-center text-[10px] font-extrabold shrink-0">
                   {currentUser.name ? currentUser.name.charAt(0).toUpperCase() : 'C'}
                 </div>
                 <span className="hidden sm:inline">{currentUser.name.split(' ')[0]}</span>
-                <span className="sm:hidden">Account</span>
-                <ChevronDown className="w-3 h-3 opacity-60" />
+                <ChevronDown className="hidden sm:inline w-3 h-3 opacity-60" />
               </button>
 
               {/* Customer Account Dropdown Menu */}

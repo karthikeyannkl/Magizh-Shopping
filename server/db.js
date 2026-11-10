@@ -195,12 +195,18 @@ export async function initDatabase() {
       customer_id TEXT NOT NULL,
       customer_name TEXT NOT NULL,
       customer_phone TEXT NOT NULL,
+      customer_email TEXT,
+      b5_id TEXT,
       coins REAL NOT NULL,
+      approved_amount REAL,
       reason TEXT NOT NULL,
       requested_by TEXT NOT NULL,
       requested_at TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'pending',
+      admin_id TEXT,
       admin_notes TEXT,
+      previous_balance REAL,
+      new_balance REAL,
       resolved_at TEXT
     );
 
@@ -371,6 +377,32 @@ function migrateSchema() {
     }
   } catch (err) {
     console.warn('[DB Migration] Users schema check:', err.message);
+  }
+
+  // Migration for manual_coin_requests
+  const manualCoinRequestCols = [
+    { name: 'customer_email', type: 'TEXT' },
+    { name: 'b5_id', type: 'TEXT' },
+    { name: 'approved_amount', type: 'REAL' },
+    { name: 'admin_id', type: 'TEXT' },
+    { name: 'previous_balance', type: 'REAL' },
+    { name: 'new_balance', type: 'REAL' },
+  ];
+
+  try {
+    const mcrInfo = db.exec("PRAGMA table_info(manual_coin_requests);");
+    if (mcrInfo[0]) {
+      const existing = new Set(mcrInfo[0].values.map((v) => v[1]));
+      for (const col of manualCoinRequestCols) {
+        if (!existing.has(col.name)) {
+          try {
+            db.run(`ALTER TABLE manual_coin_requests ADD COLUMN ${col.name} ${col.type};`);
+          } catch (_) {}
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[DB Migration] manual_coin_requests schema check:', err.message);
   }
 
   // Pre-seed merchant UPI IDs and cities for default demo partners
@@ -758,10 +790,10 @@ export const dbService = {
       ]
     );
 
-    // Initialize 100 welcome coins
+    // Initialize 0 welcome coins (Coins must be requested manually and approved by Admin)
     db.run(
       `INSERT OR IGNORE INTO coin_accounts (customer_id, available_balance, total_earned, total_redeemed, pending_balance, reversed_balance)
-       VALUES (?, 100, 100, 0, 0, 0)`,
+       VALUES (?, 0, 0, 0, 0, 0)`,
       [userData.id]
     );
 
@@ -1216,11 +1248,11 @@ export const dbService = {
     const res = db.exec("SELECT * FROM coin_accounts WHERE customer_id = ?", [customerId]);
     if (!res[0] || !res[0].values[0]) {
       db.run(
-        "INSERT OR IGNORE INTO coin_accounts (customer_id, available_balance, total_earned, total_redeemed, pending_balance, reversed_balance) VALUES (?, 100, 100, 0, 0, 0)",
+        "INSERT OR IGNORE INTO coin_accounts (customer_id, available_balance, total_earned, total_redeemed, pending_balance, reversed_balance) VALUES (?, 0, 0, 0, 0, 0)",
         [customerId]
       );
       persistDatabase();
-      return { customerId, availableBalance: 100, totalEarned: 100, totalRedeemed: 0, pendingBalance: 0, reversedBalance: 0 };
+      return { customerId, availableBalance: 0, totalEarned: 0, totalRedeemed: 0, pendingBalance: 0, reversedBalance: 0 };
     }
     const cols = res[0].columns;
     const row = res[0].values[0];
@@ -1821,6 +1853,189 @@ export const dbService = {
       newBalance,
       coinsCredited: amount,
     };
+  },
+
+  // Manual Coin Credit Requests (Phase 1)
+  createManualCoinRequest(data) {
+    const id = data.id || `REQ-${Date.now()}`;
+    const requestedAt = data.requestedAt || new Date().toISOString();
+    const coins = parseFloat(data.coins) || 0;
+    if (coins <= 0) throw new Error('Coins amount must be greater than zero.');
+
+    db.run(
+      `INSERT INTO manual_coin_requests (
+        id, customer_id, customer_name, customer_phone, customer_email,
+        b5_id, coins, reason, requested_by, requested_at, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+      [
+        id,
+        data.customerId,
+        data.customerName || 'Customer',
+        data.customerPhone || '',
+        data.customerEmail || data.email || '',
+        data.b5Id || '',
+        coins,
+        data.reason || 'Manual coin credit request',
+        data.requestedBy || data.customerName || 'Customer',
+        requestedAt,
+      ]
+    );
+    this.logAudit(
+      'customer',
+      data.customerName || 'Customer',
+      'SUBMIT_COIN_REQUEST',
+      `Submitted request for ${coins} B5 Coins. Reason: ${data.reason}`
+    );
+    persistDatabase();
+    return this.getManualCoinRequestById(id);
+  },
+
+  getManualCoinRequestById(id) {
+    const res = db.exec("SELECT * FROM manual_coin_requests WHERE id = ?", [id]);
+    if (!res[0] || !res[0].values[0]) return null;
+    const cols = res[0].columns;
+    const row = res[0].values[0];
+    const obj = {};
+    cols.forEach((col, idx) => {
+      obj[col] = row[idx];
+    });
+    return {
+      id: obj.id,
+      customerId: obj.customer_id,
+      customerName: obj.customer_name,
+      customerPhone: obj.customer_phone,
+      customerEmail: obj.customer_email || '',
+      b5Id: obj.b5_id || '',
+      coins: obj.coins,
+      approvedAmount: obj.approved_amount != null ? obj.approved_amount : undefined,
+      reason: obj.reason,
+      requestedBy: obj.requested_by,
+      requestedAt: obj.requested_at,
+      status: obj.status,
+      adminId: obj.admin_id || undefined,
+      adminNotes: obj.admin_notes || undefined,
+      previousBalance: obj.previous_balance != null ? obj.previous_balance : undefined,
+      newBalance: obj.new_balance != null ? obj.new_balance : undefined,
+      resolvedAt: obj.resolved_at || undefined,
+    };
+  },
+
+  getManualCoinRequests(customerId = null) {
+    let sql = "SELECT * FROM manual_coin_requests";
+    const params = [];
+    if (customerId) {
+      sql += " WHERE customer_id = ?";
+      params.push(customerId);
+    }
+    sql += " ORDER BY requested_at DESC";
+
+    const res = db.exec(sql, params);
+    if (!res[0]) return [];
+    const cols = res[0].columns;
+    return res[0].values.map((row) => {
+      const obj = {};
+      cols.forEach((col, idx) => {
+        obj[col] = row[idx];
+      });
+      return {
+        id: obj.id,
+        customerId: obj.customer_id,
+        customerName: obj.customer_name,
+        customerPhone: obj.customer_phone,
+        customerEmail: obj.customer_email || '',
+        b5Id: obj.b5_id || '',
+        coins: obj.coins,
+        approvedAmount: obj.approved_amount != null ? obj.approved_amount : undefined,
+        reason: obj.reason,
+        requestedBy: obj.requested_by,
+        requestedAt: obj.requested_at,
+        status: obj.status,
+        adminId: obj.admin_id || undefined,
+        adminNotes: obj.admin_notes || undefined,
+        previousBalance: obj.previous_balance != null ? obj.previous_balance : undefined,
+        newBalance: obj.new_balance != null ? obj.new_balance : undefined,
+        resolvedAt: obj.resolved_at || undefined,
+      };
+    });
+  },
+
+  resolveManualCoinRequest(requestId, status, adminId = 'Admin', adminNotes = '', approvedAmount = null) {
+    const req = this.getManualCoinRequestById(requestId);
+    if (!req) throw new Error('Request not found.');
+    if (req.status !== 'pending') throw new Error(`Request has already been ${req.status}.`);
+
+    const now = new Date().toISOString();
+    if (status === 'approved') {
+      const amount = approvedAmount != null ? parseFloat(approvedAmount) : req.coins;
+      if (isNaN(amount) || amount <= 0) throw new Error('Approved coins amount must be greater than zero.');
+
+      const coinAcc = this.getCoinAccount(req.customerId);
+      const prevBal = coinAcc.availableBalance;
+      const newBal = prevBal + amount;
+      const newTotal = coinAcc.totalEarned + amount;
+
+      db.run(
+        "UPDATE coin_accounts SET available_balance = ?, total_earned = ? WHERE customer_id = ?",
+        [newBal, newTotal, req.customerId]
+      );
+
+      const txId = `TXN-MANUAL-${Date.now()}`;
+      this.recordCoinTransaction({
+        id: txId,
+        customerId: req.customerId,
+        orderId: null,
+        orderNumber: null,
+        type: 'manual_credit',
+        amount: amount,
+        reason: `Admin Manual Approval (${req.reason || 'Coin Request'})`,
+        balanceAfter: newBal,
+        status: 'completed',
+        timestamp: now,
+      });
+
+      this.createCoinNotification({
+        customerId: req.customerId,
+        type: 'credit',
+        coins: amount,
+        previousBalance: prevBal,
+        newBalance: newBal,
+        title: 'B5 Coins Approved & Credited!',
+        message: adminNotes || `Your request for ${amount} B5 Coins has been approved by Admin.`,
+      });
+
+      db.run(
+        `UPDATE manual_coin_requests
+         SET status = 'approved', approved_amount = ?, admin_id = ?, previous_balance = ?, new_balance = ?, admin_notes = ?, resolved_at = ?
+         WHERE id = ?`,
+        [amount, adminId, prevBal, newBal, adminNotes || 'Approved by Admin', now, requestId]
+      );
+
+      this.logAudit(
+        'admin',
+        adminId,
+        'APPROVE_COIN_REQUEST',
+        `Approved request ${requestId} for ${req.customerName}. Credited: ${amount} coins. Balance: ${prevBal} -> ${newBal}. Note: ${adminNotes}`
+      );
+    } else if (status === 'rejected') {
+      db.run(
+        `UPDATE manual_coin_requests
+         SET status = 'rejected', admin_id = ?, admin_notes = ?, resolved_at = ?
+         WHERE id = ?`,
+        [adminId, adminNotes || 'Rejected by Admin', now, requestId]
+      );
+
+      this.logAudit(
+        'admin',
+        adminId,
+        'REJECT_COIN_REQUEST',
+        `Rejected request ${requestId} for ${req.customerName}. Note: ${adminNotes}`
+      );
+    } else {
+      throw new Error(`Invalid status "${status}". Allowed: approved, rejected.`);
+    }
+
+    persistDatabase();
+    return this.getManualCoinRequestById(requestId);
   },
 
   // Audit Logs

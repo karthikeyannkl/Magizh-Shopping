@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Shield, ShieldAlert, Lock, ArrowRight, CheckCircle2, AlertTriangle, Mail, Phone } from 'lucide-react';
 import { User } from '../../types';
-import { StorageService } from '../../services/storage';
+import { StorageService, subscribe } from '../../services/storage';
 
 interface AdminAuthGuardProps {
   currentUser: User;
@@ -16,8 +16,18 @@ export const AdminAuthGuard: React.FC<AdminAuthGuardProps> = ({
   onNavigateStorefront,
   children,
 }) => {
-  // Strict role check: Only admin can view Admin Panel
-  if (currentUser.role === 'admin') {
+  // Independent Admin Portal Session
+  const [adminUser, setAdminUser] = useState<User | null>(() => StorageService.getAdminUser());
+
+  useEffect(() => {
+    const unsub = subscribe('adminUserChanged', (u: User | null) => {
+      setAdminUser(u);
+    });
+    return () => unsub();
+  }, []);
+
+  // Strict role check: Only authenticated admin can view Admin Panel
+  if (adminUser && adminUser.role === 'admin') {
     return <>{children}</>;
   }
 
@@ -43,9 +53,10 @@ export const AdminAuthGuard: React.FC<AdminAuthGuardProps> = ({
 
       if (res.ok && data?.success && data?.user?.role === 'admin') {
         if (data.token) {
-          localStorage.setItem('magizh_admin_token', data.token);
+          StorageService.setAdminToken(data.token);
         }
-        StorageService.setCurrentUser(data.user);
+        StorageService.setAdminUser(data.user);
+        setAdminUser(data.user);
         onLoginSuccess(data.user);
         setLoading(false);
         return;
@@ -82,7 +93,8 @@ export const AdminAuthGuard: React.FC<AdminAuthGuardProps> = ({
       return;
     }
 
-    StorageService.setCurrentUser(user);
+    StorageService.setAdminUser(user);
+    setAdminUser(user);
     onLoginSuccess(user);
     setLoading(false);
   };

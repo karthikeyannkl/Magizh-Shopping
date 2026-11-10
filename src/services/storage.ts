@@ -44,6 +44,18 @@ const KEYS = {
   AUDIT_LOGS: 'magizh_audit_logs',
 };
 
+// Strictly Separated Portal Authentication Session Keys
+const PORTAL_KEYS = {
+  CUSTOMER_USER: 'magizh_customer_user',
+  CUSTOMER_TOKEN: 'magizh_customer_token',
+  PARTNER_USER: 'magizh_partner_user',
+  PARTNER_TOKEN: 'magizh_partner_token',
+  ADMIN_USER: 'magizh_admin_user',
+  ADMIN_TOKEN: 'magizh_admin_token',
+  SALES_USER: 'magizh_sales_user',
+  SALES_TOKEN: 'magizh_sales_token',
+};
+
 // Event Bus
 type Listener = (data?: any) => void;
 const listeners: Record<string, Listener[]> = {};
@@ -341,7 +353,120 @@ export const DEFAULT_GUEST_USER: User = {
 };
 
 export const StorageService = {
-  // Current User / Session
+  // --- Dedicated Portal Sessions (Strict Role Separation) ---
+
+  // 1. Customer Session
+  getCustomerUser(): User {
+    const user = getStorage<User | null>(PORTAL_KEYS.CUSTOMER_USER, null) || getStorage<User | null>(KEYS.CURRENT_USER, null);
+    if (!user || user.isGuest) {
+      return DEFAULT_GUEST_USER;
+    }
+    return user;
+  },
+
+  setCustomerUser(user: User): void {
+    setStorage(PORTAL_KEYS.CUSTOMER_USER, user);
+    setStorage(KEYS.CURRENT_USER, user);
+    emit('customerUserChanged', user);
+    emit('currentUserChanged', user);
+  },
+
+  customerLogout(): void {
+    localStorage.removeItem(PORTAL_KEYS.CUSTOMER_USER);
+    localStorage.removeItem(PORTAL_KEYS.CUSTOMER_TOKEN);
+    localStorage.removeItem(KEYS.CURRENT_USER);
+    localStorage.removeItem('magizh_auth_token');
+    setStorage(KEYS.CURRENT_USER, DEFAULT_GUEST_USER);
+    emit('customerUserChanged', DEFAULT_GUEST_USER);
+    emit('currentUserChanged', DEFAULT_GUEST_USER);
+  },
+
+  // 2. Partner Session
+  getPartnerUser(): User | null {
+    const user = getStorage<User | null>(PORTAL_KEYS.PARTNER_USER, null);
+    if (user && user.role === 'partner') return user;
+    return null;
+  },
+
+  setPartnerUser(user: User): void {
+    setStorage(PORTAL_KEYS.PARTNER_USER, user);
+    emit('partnerUserChanged', user);
+  },
+
+  partnerLogout(): void {
+    localStorage.removeItem(PORTAL_KEYS.PARTNER_USER);
+    localStorage.removeItem(PORTAL_KEYS.PARTNER_TOKEN);
+    localStorage.removeItem('magizh_partner_token');
+    localStorage.removeItem('magizh_partner_user');
+    emit('partnerUserChanged', null);
+  },
+
+  getPartnerToken(): string | null {
+    return localStorage.getItem(PORTAL_KEYS.PARTNER_TOKEN) || localStorage.getItem('magizh_partner_token');
+  },
+
+  setPartnerToken(token: string | null): void {
+    if (token) {
+      localStorage.setItem(PORTAL_KEYS.PARTNER_TOKEN, token);
+      localStorage.setItem('magizh_partner_token', token);
+    } else {
+      localStorage.removeItem(PORTAL_KEYS.PARTNER_TOKEN);
+      localStorage.removeItem('magizh_partner_token');
+    }
+  },
+
+  // 3. Admin Session
+  getAdminUser(): User | null {
+    const user = getStorage<User | null>(PORTAL_KEYS.ADMIN_USER, null);
+    if (user && user.role === 'admin') return user;
+    return null;
+  },
+
+  setAdminUser(user: User): void {
+    setStorage(PORTAL_KEYS.ADMIN_USER, user);
+    emit('adminUserChanged', user);
+  },
+
+  adminLogout(): void {
+    localStorage.removeItem(PORTAL_KEYS.ADMIN_USER);
+    localStorage.removeItem(PORTAL_KEYS.ADMIN_TOKEN);
+    localStorage.removeItem('magizh_admin_token');
+    emit('adminUserChanged', null);
+  },
+
+  getAdminToken(): string | null {
+    return localStorage.getItem(PORTAL_KEYS.ADMIN_TOKEN) || localStorage.getItem('magizh_admin_token');
+  },
+
+  setAdminToken(token: string | null): void {
+    if (token) {
+      localStorage.setItem(PORTAL_KEYS.ADMIN_TOKEN, token);
+      localStorage.setItem('magizh_admin_token', token);
+    } else {
+      localStorage.removeItem(PORTAL_KEYS.ADMIN_TOKEN);
+      localStorage.removeItem('magizh_admin_token');
+    }
+  },
+
+  // 4. Sales / Referral Leader Session
+  getSalesUser(): User | null {
+    const user = getStorage<User | null>(PORTAL_KEYS.SALES_USER, null);
+    if (user && user.role === 'sales') return user;
+    return null;
+  },
+
+  setSalesUser(user: User): void {
+    setStorage(PORTAL_KEYS.SALES_USER, user);
+    emit('salesUserChanged', user);
+  },
+
+  salesLogout(): void {
+    localStorage.removeItem(PORTAL_KEYS.SALES_USER);
+    localStorage.removeItem(PORTAL_KEYS.SALES_TOKEN);
+    emit('salesUserChanged', null);
+  },
+
+  // Generic backward compatibility methods
   getCurrentUser(): User {
     const user = getStorage<User | null>(KEYS.CURRENT_USER, null);
     if (!user || user.isGuest) {
@@ -361,38 +486,7 @@ export const StorageService = {
   },
 
   logout(): void {
-    localStorage.removeItem(KEYS.CURRENT_USER);
-    localStorage.removeItem('magizh_auth_token');
-    localStorage.removeItem('magizh_customer_token');
-    localStorage.removeItem('magizh_admin_token');
-    localStorage.removeItem('magizh_partner_token');
-    sessionStorage.clear();
-    setStorage(KEYS.CURRENT_USER, DEFAULT_GUEST_USER);
-    emit('currentUserChanged', DEFAULT_GUEST_USER);
-  },
-
-  getPartnerToken(): string | null {
-    return localStorage.getItem('magizh_partner_token');
-  },
-
-  setPartnerToken(token: string | null): void {
-    if (token) {
-      localStorage.setItem('magizh_partner_token', token);
-    } else {
-      localStorage.removeItem('magizh_partner_token');
-    }
-  },
-
-  getAdminToken(): string | null {
-    return localStorage.getItem('magizh_admin_token');
-  },
-
-  setAdminToken(token: string | null): void {
-    if (token) {
-      localStorage.setItem('magizh_admin_token', token);
-    } else {
-      localStorage.removeItem('magizh_admin_token');
-    }
+    this.customerLogout();
   },
 
   switchRole(role: UserRole): User {
@@ -458,6 +552,26 @@ export const StorageService = {
     }
     setStorage(KEYS.PRODUCTS, products);
     emit('productsChanged', products);
+
+    // Backend database persistence
+    const adminToken = this.getAdminToken();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (adminToken) headers['Authorization'] = `Bearer ${adminToken}`;
+
+    fetch(`/api/products/${encodeURIComponent(product.id)}`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(product),
+    }).then(async (res) => {
+      if (res.status === 404) {
+        return fetch('/api/products', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(product),
+        });
+      }
+    }).catch((err) => console.warn('[StorageService] Product backend sync error:', err));
+
     return product;
   },
 
@@ -466,6 +580,14 @@ export const StorageService = {
     const isReferencedInOrders = orders.some((o) =>
       o.items.some((it) => it.productId === productId)
     );
+
+    const adminToken = this.getAdminToken();
+    const headers: Record<string, string> = {};
+    if (adminToken) headers['Authorization'] = `Bearer ${adminToken}`;
+    fetch(`/api/products/${encodeURIComponent(productId)}`, {
+      method: 'DELETE',
+      headers,
+    }).catch((err) => console.warn('[StorageService] Product delete backend sync error:', err));
 
     if (isReferencedInOrders) {
       const prods = this.getProducts(true);
@@ -505,12 +627,29 @@ export const StorageService = {
     }
     setStorage(KEYS.CATEGORIES, categories);
     emit('categoriesChanged', categories);
+
+    const adminToken = this.getAdminToken();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (adminToken) headers['Authorization'] = `Bearer ${adminToken}`;
+    fetch('/api/categories', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(cat),
+    }).catch((err) => console.warn('[StorageService] Category backend sync error:', err));
   },
 
   deleteCategory(id: string): void {
     const categories = this.getCategories().filter((c) => c.id !== id);
     setStorage(KEYS.CATEGORIES, categories);
     emit('categoriesChanged', categories);
+
+    const adminToken = this.getAdminToken();
+    const headers: Record<string, string> = {};
+    if (adminToken) headers['Authorization'] = `Bearer ${adminToken}`;
+    fetch(`/api/categories/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers,
+    }).catch((err) => console.warn('[StorageService] Category delete backend sync error:', err));
   },
 
   // Promotional Banners
@@ -590,6 +729,26 @@ export const StorageService = {
     orders.unshift(order);
     setStorage(KEYS.ORDERS, orders);
     emit('ordersChanged', orders);
+
+    // Secure backend database persistence
+    fetch('/api/orders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(order),
+    }).then(async (res) => {
+      if (res.ok) {
+        const data = await res.json();
+        if (data.order) {
+          const currentOrders = this.getOrders();
+          const idx = currentOrders.findIndex((o) => o.id === order.id);
+          if (idx >= 0) {
+            currentOrders[idx] = data.order;
+            setStorage(KEYS.ORDERS, currentOrders);
+            emit('ordersChanged', currentOrders);
+          }
+        }
+      }
+    }).catch((err) => console.warn('[StorageService] Order backend sync error:', err));
   },
 
   updateOrderStatus(orderId: string, status: OrderStatus, note: string = ''): Order | undefined {
@@ -607,6 +766,14 @@ export const StorageService = {
 
     setStorage(KEYS.ORDERS, orders);
     emit('ordersChanged', orders);
+
+    // Secure backend database persistence
+    fetch(`/api/orders/${encodeURIComponent(orderId)}/status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status, note }),
+    }).catch((err) => console.warn('[StorageService] Order status backend sync error:', err));
+
     return order;
   },
 
@@ -636,8 +803,8 @@ export const StorageService = {
     if (!account) {
       account = {
         customerId,
-        availableBalance: 100,
-        totalEarned: 100,
+        availableBalance: 0,
+        totalEarned: 0,
         totalRedeemed: 0,
         pendingBalance: 0,
         reversedBalance: 0,
@@ -695,19 +862,7 @@ export const StorageService = {
 
   // Manual Coin Credit Requests
   getManualCoinRequests(): ManualCoinRequest[] {
-    return getStorage<ManualCoinRequest[]>(KEYS.MANUAL_COIN_REQUESTS, [
-      {
-        id: 'REQ-101',
-        customerId: 'user-cust-1',
-        customerName: 'Saravanan K',
-        customerPhone: '9876543210',
-        coins: 100,
-        reason: 'Festival Goodwill promotion credit',
-        requestedBy: 'Store Supervisor',
-        requestedAt: '2026-03-01T10:00:00Z',
-        status: 'pending',
-      },
-    ]);
+    return getStorage<ManualCoinRequest[]>(KEYS.MANUAL_COIN_REQUESTS, []);
   },
 
   createManualCoinRequest(req: Omit<ManualCoinRequest, 'id' | 'requestedAt' | 'status'>): ManualCoinRequest {
@@ -721,23 +876,66 @@ export const StorageService = {
     requests.unshift(newReq);
     setStorage(KEYS.MANUAL_COIN_REQUESTS, requests);
     emit('manualCoinRequestsChanged', requests);
+
+    // Also dispatch to backend API asynchronously
+    fetch('/api/customer/coin-requests', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        customerId: newReq.customerId,
+        customerName: newReq.customerName,
+        customerPhone: newReq.customerPhone,
+        customerEmail: newReq.customerEmail,
+        b5Id: newReq.b5Id,
+        coins: newReq.coins,
+        reason: newReq.reason,
+        requestedBy: newReq.requestedBy,
+      }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success && data.request) {
+          // Sync server-assigned ID if available
+          const current = this.getManualCoinRequests();
+          const idx = current.findIndex((r) => r.id === newReq.id);
+          if (idx !== -1) {
+            current[idx] = { ...current[idx], ...data.request };
+            setStorage(KEYS.MANUAL_COIN_REQUESTS, current);
+            emit('manualCoinRequestsChanged', current);
+          }
+        }
+      })
+      .catch(() => {});
+
     return newReq;
   },
 
-  resolveManualCoinRequest(requestId: string, status: 'approved' | 'rejected', adminNotes?: string): boolean {
+  resolveManualCoinRequest(
+    requestId: string,
+    status: 'approved' | 'rejected',
+    adminNotes?: string,
+    approvedAmount?: number,
+    adminId?: string
+  ): boolean {
     const requests = this.getManualCoinRequests();
     const req = requests.find((r) => r.id === requestId);
     if (!req || req.status !== 'pending') return false;
 
+    const amount = approvedAmount != null ? approvedAmount : req.coins;
     req.status = status;
     req.adminNotes = adminNotes;
+    req.adminId = adminId || 'Administrator';
     req.resolvedAt = new Date().toISOString();
-    setStorage(KEYS.MANUAL_COIN_REQUESTS, requests);
 
     if (status === 'approved') {
       const account = this.getCoinAccount(req.customerId);
-      const updatedBalance = account.availableBalance + req.coins;
-      const updatedTotal = account.totalEarned + req.coins;
+      const prevBal = account.availableBalance;
+      const updatedBalance = prevBal + amount;
+      const updatedTotal = account.totalEarned + amount;
+
+      req.approvedAmount = amount;
+      req.previousBalance = prevBal;
+      req.newBalance = updatedBalance;
 
       this.saveCoinAccount({
         ...account,
@@ -749,7 +947,7 @@ export const StorageService = {
         id: `TXN-MANUAL-${Date.now()}`,
         customerId: req.customerId,
         type: 'manual_credit',
-        amount: req.coins,
+        amount: amount,
         reason: `Admin Manual Credit: ${req.reason}`,
         timestamp: new Date().toISOString(),
         balanceAfter: updatedBalance,
@@ -757,7 +955,24 @@ export const StorageService = {
       });
     }
 
+    setStorage(KEYS.MANUAL_COIN_REQUESTS, requests);
     emit('manualCoinRequestsChanged', requests);
+
+    // Also sync to backend API if admin token exists
+    const token = this.getAdminToken();
+    fetch(`/api/admin/coin-requests/${encodeURIComponent(requestId)}/resolve`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        status,
+        adminNotes: adminNotes || `Reviewed and ${status} by Admin`,
+        approvedAmount: amount,
+      }),
+    }).catch(() => {});
+
     return true;
   },
 
@@ -1009,4 +1224,72 @@ export const StorageService = {
     setStorage(KEYS.AUDIT_LOGS, logs.slice(0, 100));
     emit('auditLogsChanged', logs);
   },
+
+  // Authoritative Backend Database Synchronization
+  async syncFromBackend(): Promise<void> {
+    try {
+      // 1. Products from backend database
+      const prodRes = await fetch('/api/products?includeArchived=true').catch(() => null);
+      if (prodRes && prodRes.ok) {
+        const data = await prodRes.json();
+        if (data.products && Array.isArray(data.products) && data.products.length > 0) {
+          setStorage(KEYS.PRODUCTS, data.products);
+          emit('productsChanged', data.products);
+        }
+      }
+
+      // 2. Categories from backend database
+      const catRes = await fetch('/api/categories').catch(() => null);
+      if (catRes && catRes.ok) {
+        const data = await catRes.json();
+        if (data.categories && Array.isArray(data.categories) && data.categories.length > 0) {
+          setStorage(KEYS.CATEGORIES, data.categories);
+          emit('categoriesChanged', data.categories);
+        }
+      }
+
+      // 3. Banners from backend database
+      const banRes = await fetch('/api/banners').catch(() => null);
+      if (banRes && banRes.ok) {
+        const data = await banRes.json();
+        if (data.banners && Array.isArray(data.banners) && data.banners.length > 0) {
+          setStorage(KEYS.BANNERS, data.banners);
+          emit('bannersChanged', data.banners);
+        }
+      }
+
+      // 4. Orders from backend database
+      const currentUser = this.getCurrentUser();
+      const orderUrl = currentUser && currentUser.id && !currentUser.isGuest
+        ? `/api/orders?customerId=${encodeURIComponent(currentUser.id)}`
+        : '/api/orders';
+      const ordRes = await fetch(orderUrl).catch(() => null);
+      if (ordRes && ordRes.ok) {
+        const data = await ordRes.json();
+        if (data.orders && Array.isArray(data.orders)) {
+          setStorage(KEYS.ORDERS, data.orders);
+          emit('ordersChanged', data.orders);
+        }
+      }
+
+      // 5. Coupons from backend database
+      const coupRes = await fetch('/api/coupons').catch(() => null);
+      if (coupRes && coupRes.ok) {
+        const data = await coupRes.json();
+        if (data.coupons && Array.isArray(data.coupons)) {
+          setStorage(KEYS.COUPONS, data.coupons);
+          emit('couponsChanged', data.coupons);
+        }
+      }
+    } catch (err) {
+      console.warn('[StorageService] Background sync error:', err);
+    }
+  },
 };
+
+// Auto-trigger background sync in browser environment
+if (typeof window !== 'undefined') {
+  setTimeout(() => {
+    StorageService.syncFromBackend();
+  }, 100);
+}

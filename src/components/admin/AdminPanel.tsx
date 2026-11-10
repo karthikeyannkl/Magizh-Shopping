@@ -50,6 +50,7 @@ import {
   processOrderCancellationReversal,
   creditOrderCompletionReward,
 } from '../../services/rewardsEngine';
+import { ImageUploadField } from './ImageUploadField';
 import {
   User,
   Product,
@@ -206,6 +207,31 @@ export const AdminPanel: React.FC = () => {
       .catch(() => setIsLoadingApplications(false));
   };
 
+  const [isLoadingCoinRequests, setIsLoadingCoinRequests] = useState(false);
+  const [requestNotes, setRequestNotes] = useState<Record<string, string>>({});
+  const [requestApprovedCoins, setRequestApprovedCoins] = useState<Record<string, number>>({});
+
+  const loadCoinRequests = () => {
+    setIsLoadingCoinRequests(true);
+    const token = StorageService.getAdminToken();
+    const headers: Record<string, string> = {
+      'x-admin-secret': 'MAGIZH_ADMIN_HMAC_SECRET_2026',
+    };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    fetch('/api/admin/coin-requests', { headers })
+      .then((r) => r.json())
+      .then((data) => {
+        setIsLoadingCoinRequests(false);
+        if (data.success && Array.isArray(data.requests)) {
+          setManualRequests(data.requests);
+        }
+      })
+      .catch(() => {
+        setIsLoadingCoinRequests(false);
+      });
+  };
+
   const loadAdminBills = () => {
     setIsLoadingBills(true);
     const token = StorageService.getAdminToken();
@@ -332,6 +358,7 @@ export const AdminPanel: React.FC = () => {
     loadAdminBills();
     loadAdminImages();
     loadBackupData();
+    loadCoinRequests();
   }, []);
 
   const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -539,37 +566,47 @@ export const AdminPanel: React.FC = () => {
     showNotification('B5 Coin global rules updated successfully!');
   };
 
-  // 4. Manual Coin Request Approval / Rejection
+  // 4. Manual Coin Request Approval / Rejection (Phase 1)
   const handleResolveRequest = async (id: string, status: 'approved' | 'rejected') => {
     const req = manualRequests.find((r) => r.id === id);
-    if (status === 'approved' && req) {
-      try {
-        const token = StorageService.getAdminToken();
-        await fetch('/api/admin/credit-coins', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify({
-            customerId: req.customerId,
-            coins: req.coins,
-            reason: req.reason || 'Manual Admin Credit',
-          }),
-        });
-      } catch (e) {
-        console.error('Failed to dispatch notification to backend:', e);
+    const notes = requestNotes[id] || (status === 'approved' ? 'Approved by Administrator' : 'Rejected by Administrator');
+    const approvedAmount = requestApprovedCoins[id] !== undefined ? requestApprovedCoins[id] : (req?.coins || 0);
+
+    try {
+      const token = StorageService.getAdminToken();
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'x-admin-secret': 'MAGIZH_ADMIN_HMAC_SECRET_2026',
+      };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`/api/admin/coin-requests/${encodeURIComponent(id)}/resolve`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          status,
+          adminNotes: notes,
+          approvedAmount,
+        }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        alert(data.error || 'Failed to resolve coin request.');
+        return;
       }
+    } catch (err: any) {
+      console.warn('[Admin Resolve Coin Request API Error]', err.message);
     }
 
-    StorageService.resolveManualCoinRequest(id, status, `Reviewed and ${status} by Administrator`);
+    StorageService.resolveManualCoinRequest(id, status, notes, approvedAmount, 'Magizh Admin');
     StorageService.logAction(
       'admin',
       'Administrator',
       status === 'approved' ? 'APPROVE_MANUAL_COIN_CREDIT' : 'REJECT_MANUAL_COIN_CREDIT',
-      `Request ID ${id} was ${status}`
+      `Request ID ${id} was ${status}. Amount: ${approvedAmount}. Note: ${notes}`
     );
     showNotification(`Request ${id} was ${status}!`);
+    loadCoinRequests();
   };
 
   // 5. Product CRUD and Archival
@@ -2226,72 +2263,192 @@ export const AdminPanel: React.FC = () => {
         </div>
       )}
 
-      {/* 6. MANUAL COIN REQUESTS */}
+      {/* 6. MANUAL COIN REQUESTS (Phase 1) */}
       {activeTab === 'requests' && (
         <div className="bg-white rounded-3xl border border-cream-300 p-5 shadow-2xs space-y-4">
           <div className="border-b border-cream-200 pb-3 flex justify-between items-center">
             <div>
-              <h2 className="text-sm font-extrabold text-darkbrown-900">
-                Customer & Partner Manual Coin Credit Requests
+              <h2 className="text-sm font-extrabold text-darkbrown-900 flex items-center gap-2">
+                <Coins className="w-4 h-4 text-b5-700" />
+                <span>Customer B5 Coin Credit Requests</span>
               </h2>
-              <p className="text-xs text-gray-500">Requires dual administrator approval</p>
+              <p className="text-xs text-gray-500">
+                Manual verification &amp; atomic wallet credit by Magizh Administrator. Zero automatic welcome coins.
+              </p>
             </div>
-            <span className="text-xs font-mono font-bold text-gray-500">
-              {manualRequests.filter((r) => r.status === 'pending').length} pending
-            </span>
-          </div>
-
-          <div className="space-y-2.5">
-            {manualRequests.map((req) => (
-              <div
-                key={req.id}
-                className="p-3.5 border border-cream-300 rounded-2xl bg-cream-50/50 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+            <div className="flex items-center gap-2">
+              <button
+                onClick={loadCoinRequests}
+                disabled={isLoadingCoinRequests}
+                className="px-2.5 py-1 bg-cream-100 hover:bg-cream-200 text-darkbrown-800 rounded-lg text-xs font-bold transition-all flex items-center gap-1 border border-cream-300 disabled:opacity-50"
               >
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-extrabold text-darkbrown-900">{req.customerName}</span>
-                    <span className="font-mono text-gray-500">({req.customerPhone})</span>
-                    <span className="bg-amber-100 text-amber-800 text-[10px] font-bold px-2 py-0.2 rounded">
-                      +{req.coins} Coins
-                    </span>
-                  </div>
-                  <p className="text-gray-600 mt-1">Reason: "{req.reason}"</p>
-                  <p className="text-[10px] text-gray-400 mt-0.5">
-                    Requested by: {req.requestedBy} &bull; Date: {new Date(req.requestedAt).toLocaleDateString()}
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  {req.status === 'pending' ? (
-                    <>
-                      <button
-                        onClick={() => handleResolveRequest(req.id, 'approved')}
-                        className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold"
-                      >
-                        Approve
-                      </button>
-                      <button
-                        onClick={() => handleResolveRequest(req.id, 'rejected')}
-                        className="px-3 py-1.5 bg-red-700 hover:bg-red-800 text-white rounded-xl text-xs font-bold"
-                      >
-                        Reject
-                      </button>
-                    </>
-                  ) : (
-                    <span
-                      className={`font-black text-xs uppercase px-2.5 py-1 rounded-lg ${
-                        req.status === 'approved'
-                          ? 'bg-emerald-100 text-emerald-900'
-                          : 'bg-red-100 text-red-900'
-                      }`}
-                    >
-                      {req.status}
-                    </span>
-                  )}
-                </div>
-              </div>
-            ))}
+                <RotateCcw className={`w-3 h-3 ${isLoadingCoinRequests ? 'animate-spin' : ''}`} />
+                <span>Refresh</span>
+              </button>
+              <span className="text-xs font-mono font-bold text-amber-800 bg-amber-50 border border-amber-300 px-2 py-0.5 rounded-full">
+                {manualRequests.filter((r) => r.status === 'pending').length} pending
+              </span>
+            </div>
           </div>
+
+          {manualRequests.length === 0 ? (
+            <div className="text-center py-8 text-gray-400 space-y-1">
+              <Coins className="w-8 h-8 mx-auto opacity-30 text-darkbrown-400" />
+              <p className="text-xs">No coin requests currently in queue.</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {manualRequests.map((req) => (
+                <div
+                  key={req.id}
+                  className={`p-4 border rounded-2xl text-xs flex flex-col lg:flex-row lg:items-center justify-between gap-4 transition-all ${
+                    req.status === 'pending'
+                      ? 'bg-amber-50/30 border-amber-200'
+                      : req.status === 'approved'
+                      ? 'bg-emerald-50/20 border-emerald-200'
+                      : 'bg-cream-50/50 border-cream-300'
+                  }`}
+                >
+                  <div className="space-y-1.5 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-mono font-bold text-darkbrown-900 bg-white px-2 py-0.5 rounded border border-cream-300">
+                        {req.id}
+                      </span>
+                      <span className="font-black text-darkbrown-900 text-sm">
+                        {req.customerName}
+                      </span>
+                      <span className="font-mono text-gray-600 bg-cream-100 px-1.5 py-0.2 rounded">
+                        {req.customerPhone}
+                      </span>
+                      {req.customerEmail && (
+                        <span className="text-gray-500 font-mono text-[11px]">
+                          {req.customerEmail}
+                        </span>
+                      )}
+                      <span className="bg-amber-100 text-amber-800 text-[11px] font-black px-2 py-0.5 rounded">
+                        Requested: {req.coins} Coins (= ₹{req.coins})
+                      </span>
+                    </div>
+
+                    <p className="text-gray-700">
+                      <strong className="text-darkbrown-900">Reason:</strong> "{req.reason}"
+                    </p>
+
+                    {req.b5Id && (
+                      <p className="text-[11px] text-gray-600 font-mono">
+                        <strong className="text-darkbrown-800">Customer B5 ID Reference:</strong> {req.b5Id}{' '}
+                        <span className="text-gray-400">(Manual verification only)</span>
+                      </p>
+                    )}
+
+                    <div className="text-[10px] text-gray-400 flex items-center gap-2">
+                      <span>Requested by: {req.requestedBy}</span>
+                      <span>&bull;</span>
+                      <span>Date: {new Date(req.requestedAt).toLocaleString('en-IN')}</span>
+                    </div>
+
+                    {req.status !== 'pending' && (
+                      <div className="mt-2 p-2 bg-white rounded-xl border border-cream-300 text-[11px] space-y-1">
+                        <div className="flex items-center gap-3 text-gray-600">
+                          {req.approvedAmount != null && (
+                            <span>
+                              <strong>Approved:</strong> +{req.approvedAmount} Coins
+                            </span>
+                          )}
+                          {req.previousBalance != null && req.newBalance != null && (
+                            <span>
+                              <strong>Balance:</strong> {req.previousBalance} &rarr; {req.newBalance}
+                            </span>
+                          )}
+                          {req.adminId && <span><strong>Admin:</strong> {req.adminId}</span>}
+                          {req.resolvedAt && (
+                            <span>
+                              <strong>Resolved:</strong> {new Date(req.resolvedAt).toLocaleString('en-IN')}
+                            </span>
+                          )}
+                        </div>
+                        {req.adminNotes && (
+                          <p className="text-gray-700">
+                            <strong>Admin Note:</strong> {req.adminNotes}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="shrink-0 space-y-2">
+                    {req.status === 'pending' ? (
+                      <div className="space-y-2 bg-white p-3 rounded-2xl border border-cream-300 sm:w-80">
+                        <div className="flex items-center gap-2">
+                          <label className="text-[11px] font-bold text-darkbrown-800 shrink-0">
+                            Approve Coins:
+                          </label>
+                          <input
+                            type="number"
+                            min={1}
+                            max={10000}
+                            value={requestApprovedCoins[req.id] !== undefined ? requestApprovedCoins[req.id] : req.coins}
+                            onChange={(e) =>
+                              setRequestApprovedCoins((prev) => ({
+                                ...prev,
+                                [req.id]: Math.max(1, parseInt(e.target.value) || 0),
+                              }))
+                            }
+                            className="w-24 p-1.5 border border-cream-300 rounded-lg font-mono font-bold text-right"
+                          />
+                        </div>
+                        <input
+                          type="text"
+                          placeholder="Admin review notes..."
+                          value={requestNotes[req.id] || ''}
+                          onChange={(e) =>
+                            setRequestNotes((prev) => ({
+                              ...prev,
+                              [req.id]: e.target.value,
+                            }))
+                          }
+                          className="w-full p-1.5 border border-cream-300 rounded-lg text-xs"
+                        />
+                        <div className="flex items-center gap-2 pt-1">
+                          <button
+                            onClick={() => handleResolveRequest(req.id, 'approved')}
+                            className="flex-1 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-1 shadow-2xs"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            <span>Approve</span>
+                          </button>
+                          <button
+                            onClick={() => handleResolveRequest(req.id, 'rejected')}
+                            className="flex-1 py-1.5 bg-red-700 hover:bg-red-800 text-white rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-1 shadow-2xs"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                            <span>Reject</span>
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex justify-end">
+                        <span
+                          className={`font-black text-xs uppercase px-3 py-1.5 rounded-xl border flex items-center gap-1.5 ${
+                            req.status === 'approved'
+                              ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                              : 'bg-red-100 text-red-900 border-red-300'
+                          }`}
+                        >
+                          {req.status === 'approved' ? (
+                            <CheckCircle2 className="w-4 h-4 text-emerald-700" />
+                          ) : (
+                            <X className="w-4 h-4 text-red-700" />
+                          )}
+                          <span>{req.status}</span>
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -2993,63 +3150,44 @@ export const AdminPanel: React.FC = () => {
                 />
               </div>
 
-              {/* Product Images (Up to 3 images) */}
-              <div className="space-y-2">
+              {/* Product Images (Up to 3 images with Direct File Upload & URL toggle) */}
+              <div className="space-y-3 bg-cream-50/50 p-3.5 rounded-2xl border border-cream-200">
                 <div className="flex justify-between items-center">
                   <label className="block text-gray-700 font-bold">
-                    Product Images (Up to 3 Images Supported) *
+                    Product Photography & Images (Up to 3 Slots) *
                   </label>
-                  <span className="text-[11px] text-gray-500">
-                    {editingProduct.images.length}/3 uploaded
+                  <span className="text-[11px] text-magizh-900 font-black bg-cream-200 px-2 py-0.5 rounded-full">
+                    {(editingProduct.images || []).length}/3 Uploaded
                   </span>
                 </div>
 
-                <div className="grid grid-cols-3 gap-3">
+                <div className="space-y-3">
                   {[0, 1, 2].map((idx) => {
-                    const img = editingProduct.images[idx];
+                    const currentImg = editingProduct.images?.[idx] || '';
                     return (
-                      <div
+                      <ImageUploadField
                         key={idx}
-                        className="relative border border-dashed border-cream-400 rounded-2xl h-24 bg-cream-50/50 flex flex-col items-center justify-center p-2 text-center overflow-hidden group"
-                      >
-                        {img ? (
-                          <>
-                            <img src={img} alt={`Slot ${idx + 1}`} className="w-full h-full object-cover rounded-xl" />
-                            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1.5">
-                              <label className="cursor-pointer p-1.5 bg-white text-gray-800 rounded-lg hover:bg-cream-100">
-                                <Upload className="w-3.5 h-3.5" />
-                                <input
-                                  type="file"
-                                  accept="image/*"
-                                  className="hidden"
-                                  onChange={(e) => handleImageUpload(e, idx)}
-                                />
-                              </label>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const updated = editingProduct.images.filter((_, i) => i !== idx);
-                                  setEditingProduct({ ...editingProduct, images: updated });
-                                }}
-                                className="p-1.5 bg-red-600 text-white rounded-lg hover:bg-red-700"
-                              >
-                                <X className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          </>
-                        ) : (
-                          <label className="cursor-pointer flex flex-col items-center justify-center w-full h-full">
-                            <Upload className="w-5 h-5 text-gray-400 mb-1" />
-                            <span className="text-[10px] text-gray-500 font-bold">Upload Slot #{idx + 1}</span>
-                            <input
-                              type="file"
-                              accept="image/*"
-                              className="hidden"
-                              onChange={(e) => handleImageUpload(e, idx)}
-                            />
-                          </label>
-                        )}
-                      </div>
+                        label={`Product Photo`}
+                        slotIndex={idx}
+                        value={currentImg}
+                        assignedProductId={editingProduct.id}
+                        title={`${editingProduct.name} - Photo #${idx + 1}`}
+                        onChange={(url) => {
+                          const updated = [...(editingProduct.images || [])];
+                          if (idx < updated.length) {
+                            updated[idx] = url;
+                          } else {
+                            updated.push(url);
+                          }
+                          setEditingProduct({ ...editingProduct, images: updated.filter(Boolean) });
+                        }}
+                        onRemove={() => {
+                          const updated = (editingProduct.images || []).filter((_, i) => i !== idx);
+                          setEditingProduct({ ...editingProduct, images: updated });
+                        }}
+                        placeholderUrl="https://images.unsplash.com/..."
+                        helperText="Upload photo (JPEG, PNG, WebP, GIF, SVG < 5 MB) or enter image URL."
+                      />
                     );
                   })}
                 </div>
@@ -3402,12 +3540,32 @@ export const AdminPanel: React.FC = () => {
                 />
               </div>
 
+              <div>
+                <ImageUploadField
+                  label="Category Icon / Photo"
+                  value={
+                    editingCategory.icon &&
+                    (editingCategory.icon.startsWith('http') ||
+                      editingCategory.icon.startsWith('/api/') ||
+                      editingCategory.icon.startsWith('data:'))
+                      ? editingCategory.icon
+                      : ''
+                  }
+                  assignedCategoryId={editingCategory.id}
+                  title={`Category: ${editingCategory.name}`}
+                  onChange={(url) => setEditingCategory({ ...editingCategory, icon: url })}
+                  onRemove={() => setEditingCategory({ ...editingCategory, icon: '🌾' })}
+                  placeholderUrl="https://images.unsplash.com/..."
+                  helperText="Upload category image (JPEG, PNG, WebP, SVG < 5 MB) or use the emoji field below."
+                />
+              </div>
+
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-gray-700 font-bold mb-1">Emoji / Icon</label>
+                  <label className="block text-gray-700 font-bold mb-1">Emoji Symbol (Optional Fallback)</label>
                   <input
                     type="text"
-                    value={editingCategory.icon}
+                    value={editingCategory.icon && editingCategory.icon.length <= 4 ? editingCategory.icon : ''}
                     onChange={(e) => setEditingCategory({ ...editingCategory, icon: e.target.value })}
                     placeholder="🌾"
                     className="w-full p-2 bg-cream-50/50 border border-cream-300 rounded-xl text-center text-lg"
@@ -3505,16 +3663,15 @@ export const AdminPanel: React.FC = () => {
                 </div>
               </div>
 
-              <div>
-                <label className="block text-gray-700 font-bold mb-1">Image URL</label>
-                <input
-                  type="text"
-                  value={editingBanner.imageUrl}
-                  onChange={(e) => setEditingBanner({ ...editingBanner, imageUrl: e.target.value })}
-                  placeholder="https://images.unsplash.com/..."
-                  className="w-full p-2 bg-cream-50/50 border border-cream-300 rounded-xl font-mono text-[11px]"
-                />
-              </div>
+              <ImageUploadField
+                label="Promotional Banner Image *"
+                value={editingBanner.imageUrl}
+                title={`Banner: ${editingBanner.title}`}
+                onChange={(val) => setEditingBanner({ ...editingBanner, imageUrl: val })}
+                onRemove={() => setEditingBanner({ ...editingBanner, imageUrl: '' })}
+                placeholderUrl="https://images.unsplash.com/photo-..."
+                helperText="Upload high-res banner image (JPEG, PNG, WebP, GIF, SVG < 5 MB) or provide image URL."
+              />
 
               <div className="flex justify-end gap-2 pt-3 border-t border-cream-200">
                 <button

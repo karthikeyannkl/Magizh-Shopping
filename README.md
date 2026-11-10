@@ -1,3 +1,16 @@
+# Magizh Shopping - Corrected Production Source Code
+
+## 7-Phase Complete Implementation
+- Phase 1: B5 Coin Request & Admin Manual Approval (0 welcome coins, atomic wallet credit, audit ledger)
+- Phase 2: Mobile Responsive Layout (0px horizontal overflow at 360px-430px)
+- Phase 3: Route-Aware Scroll Reset on Navigation
+- Phase 4: Complete Step-by-Step Checkout (Cart -> Review -> Address -> Payment -> Confirmation)
+- Phase 5: Direct File Upload (< 5MB), Persistence (/api/images/:id), Automated Backups & PRAGMA Integrity Checks
+- Phase 6: Partner POS In-Store Billing (Strict 50% max coin redemption cap, Cash/UPI settlement, Admin verification)
+- Phase 7: Automated Integration Testing (34/34 Tests Passed)
+
+---
+
 # Magizh Shopping + B5 Coin Commerce Ecosystem
 
 A complete, full-stack, mobile-first commerce platform engineered for **Magizh Shopping** (authentic South Indian millets, stone-pounded podis, cold-pressed oils, thokku, snacks, and herbal products) and **B5 Coin** (loyalty reward & in-store counter redemption currency).

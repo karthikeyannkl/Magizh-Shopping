@@ -320,7 +320,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           </h3>
           <p className="text-xs text-cream-200 mt-1">
             {view === 'login' && 'Sign in to access your 50% B5 Coin savings & order history'}
-            {view === 'register' && 'Join Magizh Shopping and receive 100 Welcome B5 Coins'}
+            {view === 'register' && 'Join Magizh Shopping for pure traditional wellness & rewards'}
             {view === 'forgot' && 'Reset your password securely via email verification'}
           </p>
         </div>
@@ -524,7 +524,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 className="w-full py-3 bg-gradient-to-r from-b5-600 to-amber-600 hover:from-b5-700 hover:to-amber-700 text-white rounded-xl text-xs sm:text-sm font-black shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50"
               >
                 <Sparkles className="w-4 h-4 text-yellow-200" />
-                <span>{loading ? 'Creating Account...' : 'Register & Claim 100 B5 Coins'}</span>
+                <span>{loading ? 'Creating Account...' : 'Create Account'}</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
             </form>

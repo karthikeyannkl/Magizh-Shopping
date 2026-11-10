@@ -183,7 +183,7 @@ apiRouter.post('/auth/register', (req, res) => {
     res.status(201).json({
       success: true,
       user: newUser,
-      message: 'Registration Successful! Welcome to Magizh Shopping with 100 Welcome B5 Coins!',
+      message: 'Registration Successful! Welcome to Magizh Shopping!',
     });
   } catch (err) {
     console.error('[API Register Error]', err);
@@ -692,6 +692,223 @@ apiRouter.post('/banners', requireAdminAuth, (req, res) => {
 });
 
 // -------------------------------------------------------------
+// Orders & Stock Management (Backend Database API)
+// -------------------------------------------------------------
+
+apiRouter.get('/orders', (req, res) => {
+  try {
+    const { customerId } = req.query;
+    let orders = dbService.getOrders();
+    if (customerId) {
+      orders = orders.filter((o) => o.customerId === customerId);
+    }
+    res.json({ success: true, count: orders.length, orders });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to retrieve orders.' });
+  }
+});
+
+apiRouter.get('/orders/:id', (req, res) => {
+  try {
+    const order = dbService.getOrderById(req.params.id);
+    if (!order) return res.status(404).json({ error: 'Order not found.' });
+    res.json({ success: true, order });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to retrieve order.' });
+  }
+});
+
+apiRouter.post('/orders', (req, res) => {
+  try {
+    const orderData = req.body;
+    if (!orderData || !orderData.items || orderData.items.length === 0) {
+      return res.status(400).json({ error: 'Order must contain at least one item.' });
+    }
+
+    // Decrement stock for purchased product variants in the database
+    if (Array.isArray(orderData.items)) {
+      for (const item of orderData.items) {
+        const product = dbService.getProductById(item.productId);
+        if (product && Array.isArray(product.variants)) {
+          let stockUpdated = false;
+          const updatedVariants = product.variants.map((v) => {
+            if (v.id === item.variantId || v.weight === item.variantWeight) {
+              const currentStock = typeof v.stock === 'number' ? v.stock : 50;
+              const newStock = Math.max(0, currentStock - (item.quantity || 1));
+              stockUpdated = true;
+              return { ...v, stock: newStock };
+            }
+            return v;
+          });
+          if (stockUpdated) {
+            dbService.saveProduct({ ...product, variants: updatedVariants });
+          }
+        }
+      }
+    }
+
+    // Handle coin redemption deduction if coins were redeemed
+    if (orderData.coinsRedeemed > 0 && orderData.customerId) {
+      const coinAccount = dbService.getCoinAccount(orderData.customerId);
+      if (coinAccount) {
+        const newBalance = Math.max(0, coinAccount.availableBalance - orderData.coinsRedeemed);
+        dbService.saveCoinAccount({
+          ...coinAccount,
+          availableBalance: newBalance,
+          totalRedeemed: coinAccount.totalRedeemed + orderData.coinsRedeemed,
+        });
+        dbService.recordCoinTransaction({
+          id: `TXN-RED-${Date.now()}`,
+          customerId: orderData.customerId,
+          orderId: orderData.id,
+          orderNumber: orderData.orderNumber,
+          type: 'redemption',
+          amount: orderData.coinsRedeemed,
+          reason: `Redeemed on Order #${orderData.orderNumber}`,
+          balanceAfter: newBalance,
+          status: 'completed',
+          timestamp: new Date().toISOString(),
+        });
+      }
+    }
+
+    // Handle reward coins earned credit if eligible
+    if (orderData.rewardCoinsEarned > 0 && orderData.customerId) {
+      const coinAccount = dbService.getCoinAccount(orderData.customerId);
+      if (coinAccount) {
+        const newBalance = coinAccount.availableBalance + orderData.rewardCoinsEarned;
+        dbService.saveCoinAccount({
+          ...coinAccount,
+          availableBalance: newBalance,
+          totalEarned: coinAccount.totalEarned + orderData.rewardCoinsEarned,
+        });
+        dbService.recordCoinTransaction({
+          id: `TXN-REW-${Date.now()}`,
+          customerId: orderData.customerId,
+          orderId: orderData.id,
+          orderNumber: orderData.orderNumber,
+          type: 'reward_credit',
+          amount: orderData.rewardCoinsEarned,
+          reason: `5% Reward Coins earned on Order #${orderData.orderNumber}`,
+          balanceAfter: newBalance,
+          status: 'completed',
+          timestamp: new Date().toISOString(),
+        });
+      }
+    }
+
+    const createdOrder = dbService.createOrder(orderData);
+    res.status(201).json({ success: true, order: createdOrder });
+  } catch (err) {
+    console.error('[API Create Order Error]', err);
+    res.status(500).json({ error: 'Failed to create order.' });
+  }
+});
+
+apiRouter.post('/orders/:id/status', (req, res) => {
+  try {
+    const { status, note } = req.body;
+    if (!status) return res.status(400).json({ error: 'Status is required.' });
+
+    const updated = dbService.updateOrderStatus(req.params.id, status, note || '');
+    if (!updated) return res.status(404).json({ error: 'Order not found.' });
+
+    // If cancelled, reverse redeemed coins back to customer balance
+    if (status === 'Cancelled' && updated.coinsRedeemed > 0 && updated.customerId) {
+      const coinAccount = dbService.getCoinAccount(updated.customerId);
+      if (coinAccount) {
+        const newBalance = coinAccount.availableBalance + updated.coinsRedeemed;
+        dbService.saveCoinAccount({
+          ...coinAccount,
+          availableBalance: newBalance,
+          totalRedeemed: Math.max(0, coinAccount.totalRedeemed - updated.coinsRedeemed),
+          reversedBalance: (coinAccount.reversedBalance || 0) + updated.coinsRedeemed,
+        });
+        dbService.recordCoinTransaction({
+          id: `TXN-REV-${Date.now()}`,
+          customerId: updated.customerId,
+          orderId: updated.id,
+          orderNumber: updated.orderNumber,
+          type: 'reversal',
+          amount: updated.coinsRedeemed,
+          reason: `Reversal of redeemed coins for Cancelled Order #${updated.orderNumber}`,
+          balanceAfter: newBalance,
+          status: 'completed',
+          timestamp: new Date().toISOString(),
+        });
+      }
+    }
+
+    res.json({ success: true, order: updated });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update order status.' });
+  }
+});
+
+// Coupons
+apiRouter.get('/coupons', (req, res) => {
+  try {
+    const coupons = [
+      {
+        code: 'WELCOME100',
+        discountType: 'fixed',
+        discountValue: 100,
+        minOrderValue: 500,
+        description: 'Flat ₹100 Off on your traditional feast order above ₹500',
+        validUntil: '2026-12-31',
+        active: true,
+      },
+      {
+        code: 'PONGAL10',
+        discountType: 'percentage',
+        discountValue: 10,
+        minOrderValue: 800,
+        maxDiscount: 200,
+        description: '10% Festive Discount on all Millet Products and Ghee',
+        validUntil: '2026-12-31',
+        active: true,
+      },
+      {
+        code: 'HEALTHY50',
+        discountType: 'fixed',
+        discountValue: 50,
+        minOrderValue: 300,
+        description: '₹50 Off on healthy soaps and podi varieties',
+        validUntil: '2026-12-31',
+        active: true,
+      },
+    ];
+    res.json({ success: true, coupons });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load coupons.' });
+  }
+});
+
+// Cloudflare D1 Status
+apiRouter.get('/d1/status', async (req, res) => {
+  try {
+    const { d1 } = await import('./d1Client.js');
+    const isConfigured = d1.isConfigured();
+    let health = null;
+    if (isConfigured) {
+      const ping = await d1.query('SELECT 1 as live_test, datetime("now") as server_time');
+      health = ping.results?.[0] || null;
+    }
+    res.json({
+      success: true,
+      database: 'magizh-shopping-db',
+      databaseId: d1.databaseId,
+      region: 'APAC',
+      configured: isConfigured,
+      connected: Boolean(health && health.live_test === 1),
+      serverTime: health?.server_time || null,
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// -------------------------------------------------------------
 // D. Partner Shops, Applications, and Server-Side Authorization
 // -------------------------------------------------------------
 
@@ -1139,8 +1356,149 @@ apiRouter.get('/audit-logs', requireAdminAuth, (req, res) => {
 });
 
 // -------------------------------------------------------------
-// Admin Product Image Library
+// Manual B5 Coin Requests & Admin Approval (Phase 1)
 // -------------------------------------------------------------
+
+// Customer: Submit Coin Credit Request
+apiRouter.post('/customer/coin-requests', (req, res) => {
+  try {
+    const {
+      customerId,
+      customerName,
+      customerPhone,
+      customerEmail,
+      b5Id,
+      coins,
+      reason,
+      requestedBy,
+    } = req.body;
+
+    if (!customerPhone && !customerId) {
+      return res.status(400).json({ error: 'Customer identifier (ID or Mobile) is required.' });
+    }
+    const coinAmount = parseFloat(coins);
+    if (isNaN(coinAmount) || coinAmount <= 0) {
+      return res.status(400).json({ error: 'Requested coin amount must be greater than zero.' });
+    }
+    if (!reason || !reason.trim()) {
+      return res.status(400).json({ error: 'Request reason is required.' });
+    }
+
+    // Resolve customerId if not provided directly
+    let targetCustomerId = customerId;
+    let targetCustomerName = customerName;
+    if (!targetCustomerId && customerPhone) {
+      const user = dbService.findUserByMobile(customerPhone);
+      if (user) {
+        targetCustomerId = user.id;
+        targetCustomerName = targetCustomerName || user.name;
+      } else {
+        targetCustomerId = `cust-${customerPhone}`;
+      }
+    }
+
+    const newRequest = dbService.createManualCoinRequest({
+      customerId: targetCustomerId,
+      customerName: targetCustomerName || 'Valued Customer',
+      customerPhone: customerPhone || '',
+      customerEmail: customerEmail || '',
+      b5Id: b5Id || '',
+      coins: coinAmount,
+      reason: reason.trim(),
+      requestedBy: requestedBy || targetCustomerName || 'Customer',
+    });
+
+    res.status(201).json({
+      success: true,
+      request: newRequest,
+      message: 'Coin credit request submitted successfully to Magizh Admin for review.',
+    });
+  } catch (err) {
+    console.error('[API Submit Coin Request Error]', err);
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+// Customer: Get My Coin Credit Requests
+apiRouter.get('/customer/coin-requests', (req, res) => {
+  try {
+    const customerId = req.query.customerId || req.query.userId;
+    if (!customerId) {
+      return res.status(400).json({ error: 'Customer ID is required.' });
+    }
+    const requests = dbService.getManualCoinRequests(customerId);
+    res.json({ success: true, count: requests.length, requests });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Admin: Get All Coin Credit Requests
+apiRouter.get('/admin/coin-requests', requireAdminAuth, (req, res) => {
+  try {
+    const requests = dbService.getManualCoinRequests();
+    res.json({ success: true, count: requests.length, requests });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Admin: Resolve Coin Credit Request (Approve or Reject with Audit Trail)
+apiRouter.post('/admin/coin-requests/:id/resolve', requireAdminAuth, (req, res) => {
+  try {
+    const { status, adminNotes, approvedAmount } = req.body;
+    if (!['approved', 'rejected'].includes(status)) {
+      return res.status(400).json({ error: 'Status must be "approved" or "rejected".' });
+    }
+
+    const adminId = req.adminUser?.name || 'Administrator';
+    const updatedRequest = dbService.resolveManualCoinRequest(
+      req.params.id,
+      status,
+      adminId,
+      adminNotes,
+      approvedAmount
+    );
+
+    res.json({
+      success: true,
+      request: updatedRequest,
+      message: `Request ${req.params.id} has been ${status} successfully.`,
+    });
+  } catch (err) {
+    console.error('[API Resolve Coin Request Error]', err);
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+// -------------------------------------------------------------
+// Admin Product Image Library & Public Binary Image Serving
+// -------------------------------------------------------------
+
+// Public Persistent Image Serving Endpoint
+apiRouter.get('/images/:id', (req, res) => {
+  try {
+    const img = dbService.getProductImageById(req.params.id);
+    if (!img) {
+      return res.status(404).send('Image not found');
+    }
+
+    if (img.dataBase64) {
+      const base64Data = img.dataBase64.replace(/^data:[^;]+;base64,/, '');
+      const buffer = Buffer.from(base64Data, 'base64');
+      res.setHeader('Content-Type', img.mimeType || 'image/jpeg');
+      res.setHeader('Content-Length', buffer.length);
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      return res.send(buffer);
+    } else if (img.url && img.url.startsWith('http')) {
+      return res.redirect(img.url);
+    }
+
+    res.status(404).send('Image data missing');
+  } catch (err) {
+    res.status(500).send('Error loading image');
+  }
+});
 
 apiRouter.get('/admin/images', requireAdminAuth, (req, res) => {
   try {
@@ -1158,12 +1516,30 @@ apiRouter.post('/admin/images/upload', requireAdminAuth, (req, res) => {
       return res.status(400).json({ error: 'Image filename and image data (URL or base64) are required.' });
     }
 
+    // Validate MIME Type
+    const validMimes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/svg+xml'];
+    const detectedMime = mimeType || 'image/jpeg';
+    if (!detectedMime.startsWith('image/')) {
+      return res.status(400).json({ error: `Unsupported file type: ${detectedMime}. Only images (JPEG, PNG, WebP, GIF, SVG) are permitted.` });
+    }
+
+    // Validate File Size (Max 5MB)
+    const MAX_SIZE = 5 * 1024 * 1024;
+    const computedSize = sizeBytes || (dataBase64 ? Math.round(dataBase64.length * 0.75) : 0);
+    if (computedSize > MAX_SIZE) {
+      return res.status(400).json({ error: `File size exceeds the 5 MB limit (Uploaded: ${(computedSize / (1024 * 1024)).toFixed(2)} MB).` });
+    }
+
+    const imageId = `img-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+    const persistentUrl = `/api/images/${imageId}`;
+
     const saved = dbService.saveProductImage({
+      id: imageId,
       filename,
-      url: url || dataBase64,
+      url: persistentUrl,
       dataBase64,
-      mimeType: mimeType || 'image/jpeg',
-      sizeBytes: sizeBytes || (dataBase64 ? Math.round(dataBase64.length * 0.75) : 0),
+      mimeType: detectedMime,
+      sizeBytes: computedSize,
       title: title || filename,
       assignedProductId,
       assignedCategoryId,
@@ -1173,6 +1549,7 @@ apiRouter.post('/admin/images/upload', requireAdminAuth, (req, res) => {
     res.status(201).json({
       success: true,
       image: saved,
+      url: persistentUrl,
       message: 'Product image successfully saved to persistent library.',
     });
   } catch (err) {

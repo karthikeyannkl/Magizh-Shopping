@@ -1,6 +1,7 @@
 # Magizh Shopping - Corrected Production Source Code
 
-## 7-Phase Complete Implementation
+## Implementation Highlights
+- Platform Health Check: Universal /healthz, /health, /api/health probe endpoints for cloud-native orchestrators
 - Phase 1: B5 Coin Request & Admin Manual Approval (0 welcome coins, atomic wallet credit, audit ledger)
 - Phase 2: Mobile Responsive Layout (0px horizontal overflow at 360px-430px)
 - Phase 3: Route-Aware Scroll Reset on Navigation

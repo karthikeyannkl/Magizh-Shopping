@@ -59,8 +59,10 @@ async function start() {
     await initDatabase();
     // Start automated daily backup scheduler
     backupService.startScheduler();
-    app.listen(PORT, '0.0.0.0', () => {
-      console.log(`[Magizh Server] Backend listening on http://0.0.0.0:${PORT}`);
+    // Dual-stack listener: Omitting host binds to :: (IPv6) with IPv4 fallback/mapping,
+    // accepting incoming connections from both IPv4 (0.0.0.0 / 127.0.0.1) and IPv6 (:: / ::1)
+    app.listen(PORT, () => {
+      console.log(`[Magizh Server] Backend listening on port ${PORT} (Dual-Stack IPv4/IPv6)`);
     });
   } catch (err) {
     console.error('[Magizh Server] Failed to start server:', err);

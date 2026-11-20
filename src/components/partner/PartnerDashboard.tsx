@@ -86,14 +86,16 @@ export const PartnerDashboard: React.FC = () => {
     StorageService.getPartnerLocalTransactions(activePartner?.id || 'ptr-1')
   );
 
-  type TabType = 'overview' | 'billing' | 'pending' | 'history' | 'settings' | 'orders' | 'inventory';
+  type TabType = 'overview' | 'billing' | 'pending' | 'history' | 'settings' | 'orders' | 'inventory' | 'monthlyCoinReport';
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => new Date().toISOString().slice(0, 7));
 
   // Server-backed bills state
   const [serverBills, setServerBills] = useState<PartnerBill[]>([]);
   const [isLoadingBills, setIsLoadingBills] = useState(false);
   const [approvingBillId, setApprovingBillId] = useState<string | null>(null);
+  const [rejectingBillId, setRejectingBillId] = useState<string | null>(null);
   const [confirmingPaymentId, setConfirmingPaymentId] = useState<string | null>(null);
 
   // Customer Search & POS Billing State (Sections 4 & 5)
@@ -403,6 +405,35 @@ export const PartnerDashboard: React.FC = () => {
     }
   };
 
+  // Partner rejects / disputes bill
+  const handlePartnerRejectBill = async (billId: string) => {
+    const reason = prompt('Please enter rejection or dispute reason (e.g. Cash not received in drawer / Invalid UPI UTR):');
+    if (reason === null) return;
+    setRejectingBillId(billId);
+    try {
+      const res = await fetch(`/api/partners/bills/${billId}/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          partnerId: activePartner.id,
+          reason: reason.trim() || 'Payment not received in store counter',
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        alert(data.error || 'Failed to reject/dispute bill.');
+      } else {
+        setStatusNotice(`Bill #${data.bill.billNumber} was rejected/disputed. Zero customer coins deducted.`);
+        loadServerBills();
+        setTimeout(() => setStatusNotice(null), 4000);
+      }
+    } catch (err: any) {
+      alert(err.message || 'Network error rejecting bill.');
+    } finally {
+      setRejectingBillId(null);
+    }
+  };
+
   // Confirm payment received (dual support for admin workflow test)
   const handleConfirmPaymentReceived = async (billId: string) => {
     setConfirmingPaymentId(billId);
@@ -551,7 +582,17 @@ export const PartnerDashboard: React.FC = () => {
   // Metrics (Section 2)
   const completedBills = serverBills.filter((b) => b.status === 'COMPLETED');
   const pendingBills = serverBills.filter(
-    (b) => b.status === 'PENDING_CUSTOMER_APPROVAL' || b.status === 'CUSTOMER_SELECTED_UPI' || b.status === 'CUSTOMER_SELECTED_CASH' || b.status === 'PENDING_ADMIN_APPROVAL'
+    (b) =>
+      b.status === 'PENDING_PARTNER_VERIFICATION' ||
+      b.status === 'PAYMENT_CONFIRMED_BY_CUSTOMER' ||
+      b.status === 'CUSTOMER_SELECTED_UPI' ||
+      b.status === 'CUSTOMER_SELECTED_CASH' ||
+      b.status === 'PENDING_ADMIN_APPROVAL'
+  );
+  const awaitingCustomerBills = serverBills.filter(
+    (b) =>
+      b.status === 'PENDING_CUSTOMER_APPROVAL' ||
+      b.status === 'AWAITING_CUSTOMER_CONFIRMATION'
   );
   const totalTransactionsCount = completedBills.length + localTxs.length;
 
@@ -568,6 +609,75 @@ export const PartnerDashboard: React.FC = () => {
     if (historyFilter === 'cash') return b.paymentMethod === 'cash';
     return true;
   });
+
+  // Monthly Coin Summary Calculations (Section 5)
+  const availableMonths = React.useMemo(() => {
+    const list: { val: string; label: string }[] = [];
+    const now = new Date();
+    for (let i = 0; i < 6; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const val = d.toISOString().slice(0, 7);
+      const label = d.toLocaleString('en-IN', { month: 'long', year: 'numeric' });
+      list.push({ val, label });
+    }
+    return list;
+  }, []);
+
+  const monthBills = serverBills.filter((b) => {
+    const dt = b.createdAt || b.updatedAt || '';
+    return dt.startsWith(selectedMonth);
+  });
+  const monthCompletedBills = monthBills.filter((b) => b.status === 'COMPLETED');
+  const partnerBonusMultiplier = activePartner?.specialCoinBonusMultiplier || 1.5;
+
+  const totalMonthlyPartnerCoins = monthCompletedBills.reduce(
+    (sum, b) =>
+      sum +
+      (b.partnerRewardCoins ||
+        Math.round((b.originalBillAmount || b.billAmount || 0) * 0.05 * partnerBonusMultiplier)),
+    0
+  );
+  const totalMonthlyCoinsRedeemed = monthCompletedBills.reduce((sum, b) => sum + (b.coinsToRedeem || 0), 0);
+  const totalMonthlySales = monthCompletedBills.reduce(
+    (sum, b) => sum + (b.originalBillAmount || b.billAmount || 0),
+    0
+  );
+  const totalMonthlyCollected = monthCompletedBills.reduce((sum, b) => sum + (b.payableAmount || 0), 0);
+
+  // Previous month comparison
+  const prevMonthStr = React.useMemo(() => {
+    const [y, m] = selectedMonth.split('-').map(Number);
+    const prevDate = new Date(y, m - 2, 1);
+    return prevDate.toISOString().slice(0, 7);
+  }, [selectedMonth]);
+
+  const prevMonthCompleted = serverBills.filter(
+    (b) => (b.createdAt || '').startsWith(prevMonthStr) && b.status === 'COMPLETED'
+  );
+  const prevMonthPartnerCoins = prevMonthCompleted.reduce(
+    (sum, b) =>
+      sum +
+      (b.partnerRewardCoins ||
+        Math.round((b.originalBillAmount || b.billAmount || 0) * 0.05 * partnerBonusMultiplier)),
+    0
+  );
+
+  // Daily coin summary
+  const dailySummary = React.useMemo(() => {
+    const map = new Map<string, { date: string; billsCount: number; coinsRedeemed: number; collected: number; partnerCoins: number }>();
+    monthCompletedBills.forEach((b) => {
+      const d = (b.createdAt || '').slice(0, 10) || selectedMonth + '-01';
+      const existing = map.get(d) || { date: d, billsCount: 0, coinsRedeemed: 0, collected: 0, partnerCoins: 0 };
+      existing.billsCount += 1;
+      existing.coinsRedeemed += b.coinsToRedeem || 0;
+      existing.collected += b.payableAmount || 0;
+      existing.partnerCoins +=
+        b.partnerRewardCoins ||
+        Math.round((b.originalBillAmount || b.billAmount || 0) * 0.05 * partnerBonusMultiplier);
+      map.set(d, existing);
+    });
+    return Array.from(map.values()).sort((a, b) => b.date.localeCompare(a.date));
+  }, [monthCompletedBills, partnerBonusMultiplier, selectedMonth]);
 
   return (
     <div className="max-w-6xl mx-auto px-3 sm:px-6 py-4 pb-28 space-y-6">
@@ -704,7 +814,19 @@ export const PartnerDashboard: React.FC = () => {
           }`}
         >
           <Calendar className="w-3.5 h-3.5" />
-          <span>Transaction History &amp; Reports ({serverBills.length})</span>
+          <span>Transaction History &amp; Receipts ({serverBills.length})</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('monthlyCoinReport')}
+          className={`pb-2.5 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
+            activeTab === 'monthlyCoinReport'
+              ? 'border-amber-600 text-amber-900 font-extrabold'
+              : 'border-transparent text-gray-500 hover:text-gray-900'
+          }`}
+        >
+          <Coins className="w-3.5 h-3.5 text-amber-600" />
+          <span>Monthly Coin Report</span>
         </button>
 
         <button
@@ -1047,147 +1169,248 @@ export const PartnerDashboard: React.FC = () => {
 
       {/* TAB 3: PENDING TRANSACTIONS & PAYMENT APPROVAL (Section 8 & 9) */}
       {activeTab === 'pending' && (
-        <div className="bg-white rounded-3xl border border-cream-300 p-5 shadow-2xs space-y-4 animate-in fade-in">
+        <div className="bg-white rounded-3xl border border-cream-300 p-5 shadow-2xs space-y-6 animate-in fade-in">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-cream-200 pb-3">
             <div>
-              <h2 className="text-base font-black text-darkbrown-900 flex items-center gap-2">
-                <Clock className="w-5 h-5 text-amber-600" />
-                <span>Pending In-Store Bills &amp; Payment Approval</span>
-              </h2>
-              <p className="text-xs text-gray-500">
-                Verify customer payment received via UPI or Cash, then click approve to deduct B5 Coins.
+              <div className="flex items-center gap-2">
+                <h2 className="text-base font-black text-darkbrown-900 flex items-center gap-2">
+                  <Clock className="w-5 h-5 text-amber-600" />
+                  <span>Pending In-Store Bills &amp; Payment Approval</span>
+                </h2>
+                <span className="text-xs font-black px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300">
+                  {pendingBills.length} Ready for Cashier
+                </span>
+                {awaitingCustomerBills.length > 0 && (
+                  <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 border border-blue-200">
+                    {awaitingCustomerBills.length} Awaiting Customer
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Customer confirmed payments appear here. Verify cash or bank alert with UTR, then click confirm to complete transaction and deduct B5 Coins.
               </p>
             </div>
             <button
               onClick={loadServerBills}
               disabled={isLoadingBills}
-              className="text-xs font-bold text-blue-800 hover:text-blue-900 flex items-center gap-1 self-start sm:self-center"
+              className="text-xs font-bold text-blue-800 hover:text-blue-900 flex items-center gap-1 self-start sm:self-center bg-blue-50 px-3 py-1.5 rounded-xl border border-blue-200"
             >
-              <span>Refresh Bills</span>
+              <Clock className="w-3.5 h-3.5" />
+              <span>{isLoadingBills ? 'Refreshing...' : 'Refresh Bills'}</span>
             </button>
           </div>
 
+          {/* SECTION 1: VERIFIED BILLS READY FOR CASHIER CONFIRMATION */}
           {pendingBills.length === 0 ? (
-            <div className="py-12 text-center bg-cream-50/50 rounded-2xl border border-cream-200 text-xs text-gray-500 space-y-2">
-              <Clock className="w-8 h-8 text-gray-400 mx-auto" />
-              <p className="font-bold text-darkbrown-900">No Pending Transactions</p>
-              <p>All in-store customer bills have been verified and completed.</p>
+            <div className="py-10 text-center bg-cream-50/50 rounded-2xl border border-cream-200 text-xs text-gray-500 space-y-2">
+              <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto" />
+              <p className="font-bold text-darkbrown-900 text-sm">No Pending Transactions Awaiting Verification</p>
+              <p>All customer bills have been verified and processed by the cashier.</p>
               <button
                 onClick={() => setActiveTab('billing')}
-                className="mt-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-darkbrown-950 font-black rounded-xl text-xs"
+                className="mt-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-darkbrown-950 font-black rounded-xl text-xs shadow-xs"
               >
                 Create New Customer Bill
               </button>
             </div>
           ) : (
-            <div className="space-y-3.5">
+            <div className="space-y-4">
+              <div className="text-xs font-bold text-darkbrown-900 flex items-center gap-1.5 text-emerald-800">
+                <BadgeCheck className="w-4 h-4 text-emerald-600" />
+                <span>Customer Confirmed — Action Required by Cashier ({pendingBills.length})</span>
+              </div>
+
               {pendingBills.map((bill) => {
-                const isUpi = bill.status === 'CUSTOMER_SELECTED_UPI' || bill.paymentMethod === 'upi';
-                const isCash = bill.status === 'CUSTOMER_SELECTED_CASH' || bill.paymentMethod === 'cash';
-                const isAwaitingCustomer = bill.status === 'PENDING_CUSTOMER_APPROVAL';
+                const isUpi = bill.paymentMethod === 'upi' || bill.status === 'CUSTOMER_SELECTED_UPI';
+                const isCash = bill.paymentMethod === 'cash' || bill.status === 'CUSTOMER_SELECTED_CASH';
+                const hasUtr = !!bill.utrNumber;
 
                 return (
                   <div
                     key={bill.id}
-                    className="p-4 sm:p-5 rounded-2xl border-2 border-amber-300 bg-gradient-to-r from-amber-50/40 via-white to-amber-50/20 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4"
+                    className="p-4 sm:p-5 rounded-2xl border-2 border-emerald-300 bg-gradient-to-r from-emerald-50/40 via-white to-amber-50/20 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4"
                   >
-                    <div className="space-y-1.5">
+                    {/* Bill Detailed Information (All 8 Fields) */}
+                    <div className="space-y-2 flex-1">
+                      {/* 1. Bill #, 2. Customer Name, 3. Mobile */}
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-mono text-xs font-black text-blue-950 bg-blue-100 px-2 py-0.5 rounded-lg">
+                        <span className="font-mono text-xs font-black text-blue-950 bg-blue-100 border border-blue-300 px-2.5 py-1 rounded-lg shadow-2xs">
                           #{bill.billNumber}
                         </span>
-                        <span className="font-bold text-xs text-darkbrown-900">
-                          {bill.customerName} (<span className="font-mono">{bill.customerPhone}</span>)
+                        <span className="font-black text-sm text-darkbrown-900">
+                          {bill.customerName}
                         </span>
+                        <span className="font-mono text-xs text-gray-600 bg-cream-100 px-2 py-0.5 rounded-md flex items-center gap-1">
+                          <Phone className="w-3 h-3 text-gray-500" />
+                          {bill.customerPhone}
+                        </span>
+                        {/* 7. Payment Method Badge */}
                         <span
-                          className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${
+                          className={`text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full border ${
                             isUpi
-                              ? 'bg-blue-100 text-blue-800 border border-blue-300'
-                              : isCash
-                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                              : 'bg-amber-100 text-amber-800 border border-amber-300'
+                              ? 'bg-blue-100 text-blue-900 border-blue-400'
+                              : 'bg-emerald-100 text-emerald-900 border-emerald-400'
                           }`}
                         >
-                          {isUpi
-                            ? 'Customer Selected: GPay / UPI'
-                            : isCash
-                            ? 'Customer Selected: Cash at Store'
-                            : 'Awaiting Customer Payment Choice'}
+                          {isUpi ? 'Payment: GPay / UPI' : 'Payment: Cash at Store'}
                         </span>
                       </div>
 
+                      {/* 4. Bill Amount, 5. Coins Redeemed, 6. Amount Received */}
                       <div className="flex flex-wrap items-center gap-3 text-xs pt-1">
-                        <span className="text-gray-500">
-                          Original: <strong className="text-darkbrown-900">₹{bill.originalBillAmount || bill.billAmount}</strong>
+                        <span className="text-gray-600 bg-white px-2.5 py-1 rounded-lg border border-cream-300">
+                          Total Bill: <strong className="text-darkbrown-900 font-black">₹{bill.originalBillAmount || bill.billAmount}</strong>
                         </span>
-                        <span className="text-amber-800 font-bold">
-                          B5 Coins: <strong className="font-mono">{bill.coinsToRedeem}</strong> (-₹{bill.coinsToRedeem})
+                        <span className="text-amber-900 bg-amber-50 border border-amber-300 px-2.5 py-1 rounded-lg font-bold">
+                          Coins Redeemed: <strong className="font-mono">{bill.coinsToRedeem}</strong> (-₹{bill.coinsToRedeem})
                         </span>
-                        <span className="text-emerald-800 font-extrabold text-sm">
-                          Payable: <strong className="text-emerald-900">₹{bill.payableAmount}</strong>
+                        <span className="text-emerald-900 bg-emerald-100 border-2 border-emerald-400 px-3 py-1 rounded-lg font-black text-sm">
+                          Amount Received: <strong className="text-base text-emerald-950">₹{bill.payableAmount}</strong>
                         </span>
                       </div>
 
-                      {bill.itemsSummary && (
-                        <p className="text-[11px] text-gray-500 italic">Items: {bill.itemsSummary}</p>
+                      {/* 7. UPI UTR Details (if UPI) */}
+                      {isUpi && (
+                        <div className="flex items-center gap-2 text-xs bg-blue-50/80 border border-blue-200 px-3 py-1.5 rounded-xl">
+                          <QrCode className="w-4 h-4 text-blue-700 shrink-0" />
+                          <span className="font-bold text-blue-900">UPI Ref / UTR:</span>
+                          {hasUtr ? (
+                            <span className="font-mono font-black text-blue-950 bg-white px-2 py-0.5 rounded border border-blue-300 tracking-wider">
+                              {bill.utrNumber}
+                            </span>
+                          ) : (
+                            <span className="italic text-gray-500">Not provided by customer (Check bank SMS / app notification)</span>
+                          )}
+                        </div>
                       )}
+
+                      {/* 8. Transaction Date & Time & Confirmation Status */}
+                      <div className="flex flex-wrap items-center gap-3 text-[11px] text-gray-500 pt-0.5">
+                        <span className="flex items-center gap-1 font-semibold">
+                          <Calendar className="w-3 h-3 text-gray-400" />
+                          Created: {bill.createdAt ? new Date(bill.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—'}
+                        </span>
+                        {bill.customerConfirmedAt && (
+                          <span className="flex items-center gap-1 font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
+                            <BadgeCheck className="w-3 h-3 text-emerald-600" />
+                            Customer Confirmed: {new Date(bill.customerConfirmedAt).toLocaleTimeString('en-IN', { timeStyle: 'short' })}
+                          </span>
+                        )}
+                        {bill.itemsSummary && (
+                          <span className="text-gray-400 italic">
+                            Items: {bill.itemsSummary}
+                          </span>
+                        )}
+                      </div>
                     </div>
 
-                    {/* Action Controls */}
-                    <div className="flex flex-wrap items-center gap-2 self-start md:self-center shrink-0">
-                      {isUpi && (
-                        <button
-                          onClick={() => handlePartnerApproveBill(bill.id, 'Verified in GPay / bank notification')}
-                          disabled={approvingBillId === bill.id}
-                          className="px-4 py-2 bg-gradient-to-r from-blue-700 to-indigo-800 hover:from-blue-800 hover:to-indigo-900 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 disabled:opacity-50"
-                        >
-                          {approvingBillId === bill.id ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
-                          )}
-                          <span>Verify &amp; Confirm UPI Received (₹{bill.payableAmount})</span>
-                        </button>
-                      )}
+                    {/* Cashier Action Buttons */}
+                    <div className="flex flex-col sm:flex-row md:flex-col lg:flex-row items-stretch sm:items-center gap-2 shrink-0 pt-2 md:pt-0">
+                      {/* Confirm Payment Received Button */}
+                      <button
+                        onClick={() =>
+                          handlePartnerApproveBill(
+                            bill.id,
+                            isUpi
+                              ? bill.utrNumber
+                                ? `UPI confirmed with UTR ${bill.utrNumber}`
+                                : 'UPI payment confirmed in store'
+                              : 'Cash received in hand at store counter'
+                          )
+                        }
+                        disabled={approvingBillId === bill.id || rejectingBillId === bill.id}
+                        className="px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-green-700 hover:from-emerald-700 hover:to-green-800 text-white font-black text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
+                      >
+                        {approvingBillId === bill.id ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <CheckCircle2 className="w-4 h-4 text-white" />
+                        )}
+                        <span>Confirm Payment Received (₹{bill.payableAmount})</span>
+                      </button>
 
-                      {isCash && (
-                        <button
-                          onClick={() => handlePartnerApproveBill(bill.id, 'Cash received in hand at store')}
-                          disabled={approvingBillId === bill.id}
-                          className="px-4 py-2 bg-gradient-to-r from-emerald-700 to-green-800 hover:from-emerald-800 hover:to-green-900 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 disabled:opacity-50"
-                        >
-                          {approvingBillId === bill.id ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <CheckCircle2 className="w-3.5 h-3.5 text-white" />
-                          )}
-                          <span>Confirm Cash Received (₹{bill.payableAmount})</span>
-                        </button>
-                      )}
-
-                      {isAwaitingCustomer && (
-                        <button
-                          onClick={() => handlePartnerApproveBill(bill.id, 'Partner manual walk-in verification')}
-                          disabled={approvingBillId === bill.id}
-                          className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 disabled:opacity-50"
-                        >
-                          <span>Direct Partner Approve (₹{bill.payableAmount})</span>
-                        </button>
-                      )}
+                      {/* Reject / Dispute Payment Button */}
+                      <button
+                        onClick={() => handlePartnerRejectBill(bill.id)}
+                        disabled={approvingBillId === bill.id || rejectingBillId === bill.id}
+                        className="px-3.5 py-2.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-300 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1 disabled:opacity-50"
+                        title="Reject payment if cash/UPI was not received"
+                      >
+                        {rejectingBillId === bill.id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <XCircle className="w-3.5 h-3.5 text-red-600" />
+                        )}
+                        <span>Reject / Dispute</span>
+                      </button>
 
                       {/* Cancel Bill Button */}
                       <button
                         onClick={() => handleCancelBill(bill.id)}
-                        className="px-3 py-2 bg-gray-100 hover:bg-red-50 text-gray-700 hover:text-red-700 font-bold text-xs rounded-xl border border-gray-300 transition-all flex items-center gap-1"
+                        disabled={approvingBillId === bill.id || rejectingBillId === bill.id}
+                        className="px-2.5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-600 font-semibold text-xs rounded-xl border border-gray-300 transition-all flex items-center justify-center"
                         title="Cancel this bill and release customer coins"
                       >
                         <X className="w-3.5 h-3.5" />
-                        <span>Cancel</span>
                       </button>
                     </div>
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {/* SECTION 2: BILLS AWAITING CUSTOMER CONFIRMATION */}
+          {awaitingCustomerBills.length > 0 && (
+            <div className="mt-6 border-t border-cream-200 pt-5 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-blue-600" />
+                  <h3 className="text-xs font-black text-darkbrown-900 uppercase tracking-wide">
+                    Bills Awaiting Customer Payment Confirmation ({awaitingCustomerBills.length})
+                  </h3>
+                </div>
+                <span className="text-[11px] text-gray-500">
+                  Waiting for customer to tap &quot;I Have Paid Cash&quot; or &quot;I Have Completed UPI Payment&quot;
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {awaitingCustomerBills.map((b) => (
+                  <div
+                    key={b.id}
+                    className="p-3.5 bg-cream-50/60 border border-cream-300 rounded-2xl flex items-center justify-between gap-3 text-xs"
+                  >
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-bold text-blue-900 bg-blue-100 px-2 py-0.5 rounded text-[11px]">
+                          #{b.billNumber}
+                        </span>
+                        <span className="font-bold text-darkbrown-900">{b.customerName}</span>
+                        <span className="font-mono text-gray-500 text-[11px]">({b.customerPhone})</span>
+                      </div>
+                      <div className="text-[11px] text-gray-600 mt-1 flex items-center gap-2">
+                        <span>Payable: <strong className="text-emerald-800">₹{b.payableAmount}</strong></span>
+                        <span>&bull;</span>
+                        <span>Coins: <strong className="text-amber-800">{b.coinsToRedeem}</strong></span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-bold text-amber-800 bg-amber-100 border border-amber-300 px-2 py-1 rounded-lg">
+                        Customer Checkout Open
+                      </span>
+                      <button
+                        onClick={() => handleCancelBill(b.id)}
+                        className="text-gray-400 hover:text-red-600 p-1 rounded-lg hover:bg-red-50"
+                        title="Cancel Bill"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -1295,6 +1518,261 @@ export const PartnerDashboard: React.FC = () => {
               </table>
             </div>
           )}
+        </div>
+      )}
+
+      {/* TAB: PARTNER MONTHLY COIN REPORT (Section 5) */}
+      {activeTab === 'monthlyCoinReport' && (
+        <div className="bg-white rounded-3xl border border-cream-300 p-5 sm:p-6 shadow-2xs space-y-6 animate-in fade-in">
+          {/* Header & Month Selector */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-cream-200 pb-4">
+            <div>
+              <h2 className="text-base sm:text-lg font-black text-darkbrown-900 flex items-center gap-2">
+                <Coins className="w-5 h-5 text-amber-600" />
+                <span>Partner Monthly Coin Ledger &amp; Earnings Summary</span>
+              </h2>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Audit trail of partner reward coins earned (5% × {partnerBonusMultiplier} multiplier), customer coins redeemed, and store transactions.
+              </p>
+            </div>
+
+            {/* 1. Month Selector */}
+            <div className="flex items-center gap-2 bg-cream-50 p-1.5 rounded-2xl border border-cream-300 self-start sm:self-center">
+              <Calendar className="w-4 h-4 text-amber-700 ml-2" />
+              <label htmlFor="partner-month-select" className="text-xs font-bold text-gray-700">Month:</label>
+              <select
+                id="partner-month-select"
+                value={selectedMonth}
+                onChange={(e) => setSelectedMonth(e.target.value)}
+                className="bg-white px-3 py-1.5 rounded-xl border border-cream-300 text-xs font-bold text-darkbrown-900 focus:outline-none focus:ring-2 focus:ring-amber-500"
+              >
+                {availableMonths.map((m) => (
+                  <option key={m.val} value={m.val}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* 2 & 6. Monthly Summary Cards (KPIs) */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
+            {/* Card 1: Total Partner Coins */}
+            <div className="p-4 bg-gradient-to-br from-amber-500/15 via-amber-50 to-orange-50/20 border-2 border-amber-300 rounded-2xl space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-black uppercase text-amber-900">Partner Coins Earned</span>
+                <Coins className="w-4 h-4 text-amber-600" />
+              </div>
+              <p className="text-2xl font-black text-amber-950 font-mono">
+                {totalMonthlyPartnerCoins.toLocaleString('en-IN')}
+              </p>
+              <p className="text-[10px] text-amber-800 font-semibold">
+                5% commission × {partnerBonusMultiplier} multiplier
+              </p>
+            </div>
+
+            {/* Card 2: Customer Coins Redeemed */}
+            <div className="p-4 bg-gradient-to-br from-blue-50 to-indigo-50/30 border border-blue-200 rounded-2xl space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-black uppercase text-blue-900">Coins Redeemed</span>
+                <TrendingUp className="w-4 h-4 text-blue-600" />
+              </div>
+              <p className="text-2xl font-black text-blue-950 font-mono">
+                {totalMonthlyCoinsRedeemed.toLocaleString('en-IN')}
+              </p>
+              <p className="text-[10px] text-blue-700 font-semibold">
+                Customer savings at counter: ₹{totalMonthlyCoinsRedeemed.toLocaleString('en-IN')}
+              </p>
+            </div>
+
+            {/* Card 3: Total Sales Volume */}
+            <div className="p-4 bg-cream-50/80 border border-cream-300 rounded-2xl space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-black uppercase text-darkbrown-800">Total In-Store Sales</span>
+                <Receipt className="w-4 h-4 text-darkbrown-600" />
+              </div>
+              <p className="text-2xl font-black text-darkbrown-900 font-mono">
+                ₹{totalMonthlySales.toLocaleString('en-IN')}
+              </p>
+              <p className="text-[10px] text-gray-500">
+                {monthCompletedBills.length} completed transactions
+              </p>
+            </div>
+
+            {/* Card 4: Store Cash / UPI Collected */}
+            <div className="p-4 bg-emerald-50/60 border border-emerald-200 rounded-2xl space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-black uppercase text-emerald-900">Cash / UPI Collected</span>
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+              </div>
+              <p className="text-2xl font-black text-emerald-950 font-mono">
+                ₹{totalMonthlyCollected.toLocaleString('en-IN')}
+              </p>
+              <p className="text-[10px] text-emerald-700 font-semibold">
+                Directly received by cashier
+              </p>
+            </div>
+          </div>
+
+          {/* 7. Previous Month Comparison */}
+          <div className="p-3.5 bg-gradient-to-r from-cream-50 to-amber-50/30 border border-cream-300 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+            <div className="flex items-center gap-2">
+              <Clock className="w-4 h-4 text-amber-700 shrink-0" />
+              <span className="font-bold text-darkbrown-900">
+                Previous Month Comparison ({prevMonthStr}):
+              </span>
+              <span className="text-gray-600">
+                {prevMonthCompleted.length} transactions, {prevMonthPartnerCoins} partner coins earned.
+              </span>
+            </div>
+            <div className="font-mono font-bold text-xs">
+              {totalMonthlyPartnerCoins >= prevMonthPartnerCoins ? (
+                <span className="text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md">
+                  +{totalMonthlyPartnerCoins - prevMonthPartnerCoins} Coins vs Prev Month
+                </span>
+              ) : (
+                <span className="text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md">
+                  -{prevMonthPartnerCoins - totalMonthlyPartnerCoins} Coins vs Prev Month
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* 5. Daily Coin Summary */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-black text-darkbrown-900 uppercase tracking-wide flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-amber-600" />
+                <span>Daily Coin Summary &amp; POS Settlements</span>
+              </h3>
+              <span className="text-[11px] text-gray-500">
+                {dailySummary.length} Active Days
+              </span>
+            </div>
+
+            {dailySummary.length === 0 ? (
+              <div className="py-6 text-center text-xs text-gray-500 bg-cream-50/50 rounded-xl border border-cream-200">
+                No verified transactions recorded for this month.
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-xl border border-cream-200">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="bg-cream-100/60 border-b border-cream-200 text-gray-600 font-bold uppercase text-[10px]">
+                      <th className="py-2.5 px-3">Date</th>
+                      <th className="py-2.5 px-3">Bills Count</th>
+                      <th className="py-2.5 px-3">Customer Coins Redeemed</th>
+                      <th className="py-2.5 px-3">Amount Collected (₹)</th>
+                      <th className="py-2.5 px-3">Partner Reward Coins</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-cream-100">
+                    {dailySummary.map((row) => (
+                      <tr key={row.date} className="hover:bg-cream-50/60">
+                        <td className="py-2.5 px-3 font-mono font-bold text-darkbrown-900">
+                          {new Date(row.date).toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })}
+                        </td>
+                        <td className="py-2.5 px-3 font-semibold text-gray-700">
+                          {row.billsCount} bills
+                        </td>
+                        <td className="py-2.5 px-3 font-mono font-bold text-amber-800">
+                          {row.coinsRedeemed} Coins
+                        </td>
+                        <td className="py-2.5 px-3 font-mono font-bold text-emerald-800">
+                          ₹{row.collected.toLocaleString('en-IN')}
+                        </td>
+                        <td className="py-2.5 px-3 font-mono font-black text-amber-950 bg-amber-50/50">
+                          +{row.partnerCoins} Coins
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* 3 & 4. Per-Bill & Customer-Wise Transaction Details */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-black text-darkbrown-900 uppercase tracking-wide flex items-center gap-2">
+                <FileText className="w-4 h-4 text-blue-700" />
+                <span>Per-Bill &amp; Customer-Wise Transaction Breakdown ({monthCompletedBills.length})</span>
+              </h3>
+            </div>
+
+            {monthCompletedBills.length === 0 ? (
+              <div className="py-8 text-center text-xs text-gray-500 bg-cream-50/50 rounded-xl border border-cream-200">
+                No completed bills found for {selectedMonth}.
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-xl border border-cream-200">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="bg-cream-100/60 border-b border-cream-200 text-gray-600 font-bold uppercase text-[10px]">
+                      <th className="py-2.5 px-3">Bill / Receipt</th>
+                      <th className="py-2.5 px-3">Customer Details</th>
+                      <th className="py-2.5 px-3">Original Bill</th>
+                      <th className="py-2.5 px-3">Coins Redeemed</th>
+                      <th className="py-2.5 px-3">Cashier Collected</th>
+                      <th className="py-2.5 px-3">Partner Reward</th>
+                      <th className="py-2.5 px-3">Payment Method</th>
+                      <th className="py-2.5 px-3">Date &amp; Time</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-cream-100">
+                    {monthCompletedBills.map((b) => {
+                      const reward =
+                        b.partnerRewardCoins ||
+                        Math.round((b.originalBillAmount || b.billAmount || 0) * 0.05 * partnerBonusMultiplier);
+
+                      return (
+                        <tr key={b.id} className="hover:bg-cream-50/60">
+                          <td className="py-2.5 px-3 font-mono font-bold text-blue-950">
+                            <div>#{b.billNumber}</div>
+                            {b.receiptNumber && (
+                              <span className="text-[10px] text-emerald-700 block font-normal">
+                                {b.receiptNumber}
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <span className="font-bold text-darkbrown-900 block">{b.customerName}</span>
+                            <span className="text-[10px] text-gray-500 font-mono">{b.customerPhone}</span>
+                          </td>
+                          <td className="py-2.5 px-3 font-bold text-darkbrown-900">
+                            ₹{b.originalBillAmount || b.billAmount}
+                          </td>
+                          <td className="py-2.5 px-3 font-mono font-bold text-amber-700">
+                            {b.coinsToRedeem} Coins
+                          </td>
+                          <td className="py-2.5 px-3 font-mono font-black text-emerald-800">
+                            ₹{b.payableAmount}
+                          </td>
+                          <td className="py-2.5 px-3 font-mono font-black text-amber-900 bg-amber-50/40">
+                            +{reward} Coins
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <span className="uppercase text-[10px] font-bold px-2 py-0.5 rounded-full bg-cream-100 text-darkbrown-800 block w-max">
+                              {b.paymentMethod || 'In-Store'}
+                            </span>
+                            {b.utrNumber && (
+                              <span className="font-mono text-[9px] text-blue-900 block mt-0.5">
+                                UTR: {b.utrNumber}
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 text-[11px] text-gray-500 whitespace-nowrap">
+                            {b.createdAt ? new Date(b.createdAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '—'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
       )}
 

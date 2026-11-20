@@ -1617,14 +1617,21 @@ apiRouter.get('/customer/pending-bills', (req, res) => {
   res.json({ success: true, count: bills.length, bills });
 });
 
-// Single Bill Details
+// Single Bill Details for Customer
+apiRouter.get('/customer/bills/:id', (req, res) => {
+  const bill = dbService.getBillById(req.params.id);
+  if (!bill) return res.status(404).json({ error: 'Bill not found' });
+  res.json({ success: true, bill });
+});
+
+// Single Bill Details for Partner
 apiRouter.get('/partners/bills/:id', (req, res) => {
   const bill = dbService.getBillById(req.params.id);
   if (!bill) return res.status(404).json({ error: 'Bill not found' });
   res.json({ success: true, bill });
 });
 
-// Customer Selects Payment Choice (CASH or UPI / GPay)
+// Customer Selects Payment Choice (CASH or UPI / GPay) - Sets state without completing
 apiRouter.post('/customer/bills/:id/select-payment', (req, res) => {
   try {
     const { paymentMethod } = req.body;
@@ -1649,7 +1656,32 @@ apiRouter.post('/customer/bills/:id/select-payment', (req, res) => {
       upiQrTarget,
       merchantUpiId: updated.merchantUpiId,
       payableAmount: updated.payableAmount,
-      message: `Selected payment via ${paymentMethod.toUpperCase()}. Please complete payment with the partner.`,
+      message: `Selected payment via ${paymentMethod.toUpperCase()}. Please complete payment with the partner and click confirmation button.`,
+    });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+// Customer Confirms Payment (Button: "I Have Paid Cash" or "I Have Completed UPI Payment")
+apiRouter.post('/customer/bills/:id/confirm-payment', (req, res) => {
+  try {
+    const { customerId, paymentMethod, utrNumber } = req.body;
+    if (!paymentMethod) {
+      return res.status(400).json({ error: 'Payment method is required.' });
+    }
+
+    const updated = dbService.customerConfirmBillPayment(
+      req.params.id,
+      customerId,
+      paymentMethod,
+      utrNumber || ''
+    );
+
+    res.json({
+      success: true,
+      bill: updated,
+      message: `Payment confirmed via ${paymentMethod.toUpperCase()}. Sent to store cashier for verification.`,
     });
   } catch (err) {
     res.status(400).json({ success: false, error: err.message });
@@ -1667,25 +1699,25 @@ apiRouter.post('/partners/bills/:id/approve', (req, res) => {
     res.json({
       success: true,
       bill: updated,
-      message: `Payment confirmed for Bill #${updated.billNumber}! Receipt #${updated.receiptNumber} issued and ${updated.coinsToRedeem} B5 Coins deducted.`,
+      message: `Payment confirmed for Bill #${updated.billNumber}! Receipt #${updated.receiptNumber} issued, ${updated.coinsToRedeem} B5 Coins deducted, and ${updated.partnerRewardCoins || 0} Partner Reward Coins granted.`,
     });
   } catch (err) {
     res.status(400).json({ success: false, error: err.message });
   }
 });
 
-// Partner Cancels Bill
-apiRouter.post('/partners/bills/:id/cancel', (req, res) => {
+// Partner Cancels / Rejects / Disputes Bill
+apiRouter.post(['/partners/bills/:id/reject', '/partners/bills/:id/dispute', '/partners/bills/:id/cancel'], (req, res) => {
   try {
     const partnerId = req.body.partnerId;
-    const reason = req.body.reason || 'Cancelled by store partner';
+    const reason = req.body.reason || req.body.notes || 'Payment not received / Disputed by partner cashier';
     if (!partnerId) return res.status(400).json({ error: 'Partner ID is required.' });
 
-    const updated = dbService.cancelPartnerBill(req.params.id, partnerId, reason);
+    const updated = dbService.partnerRejectBill(req.params.id, partnerId, reason);
     res.json({
       success: true,
       bill: updated,
-      message: `Bill #${updated.billNumber} has been cancelled.`,
+      message: `Bill #${updated.billNumber} has been rejected/disputed. Zero coins deducted.`,
     });
   } catch (err) {
     res.status(400).json({ success: false, error: err.message });

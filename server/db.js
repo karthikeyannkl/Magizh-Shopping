@@ -478,6 +478,25 @@ function migrateSchema() {
     console.warn('[DB Migration] products schema check:', err.message);
   }
 
+  // Migration for partner_bills columns: utr_number, customer_confirmed_at, partner_reward_coins
+  try {
+    const billInfo = db.exec("PRAGMA table_info(partner_bills);");
+    if (billInfo[0]) {
+      const existing = new Set(billInfo[0].values.map((v) => v[1]));
+      if (!existing.has('utr_number')) {
+        try { db.run("ALTER TABLE partner_bills ADD COLUMN utr_number TEXT;"); } catch (_) {}
+      }
+      if (!existing.has('customer_confirmed_at')) {
+        try { db.run("ALTER TABLE partner_bills ADD COLUMN customer_confirmed_at TEXT;"); } catch (_) {}
+      }
+      if (!existing.has('partner_reward_coins')) {
+        try { db.run("ALTER TABLE partner_bills ADD COLUMN partner_reward_coins REAL DEFAULT 0;"); } catch (_) {}
+      }
+    }
+  } catch (err) {
+    console.warn('[DB Migration] partner_bills schema check:', err.message);
+  }
+
   // Pre-seed merchant UPI IDs and cities for default demo partners
   try {
     db.run("UPDATE partner_shops SET merchant_upi_id = 'magizhcafee-3@okhdfcbank', city = 'Coimbatore' WHERE id = 'ptr-1' AND (merchant_upi_id IS NULL OR merchant_upi_id = '')");
@@ -1885,8 +1904,14 @@ export const dbService = {
   },
 
   getCustomerPendingBills(customerIdOrPhone) {
+    // Return all pending bills plus any bills completed/updated in the last 30 minutes for real-time celebration receipt sync
     const res = db.exec(
-      "SELECT * FROM partner_bills WHERE (customer_id = ? OR customer_phone = ?) AND status NOT IN ('COMPLETED', 'REJECTED', 'CANCELLED') ORDER BY created_at DESC",
+      `SELECT * FROM partner_bills 
+       WHERE (customer_id = ? OR customer_phone = ?) 
+         AND (status NOT IN ('COMPLETED', 'REJECTED', 'CANCELLED') 
+              OR datetime(created_at) >= datetime('now', '-30 minutes')
+              OR datetime(COALESCE(admin_decision_at, partner_received_at, created_at)) >= datetime('now', '-30 minutes'))
+       ORDER BY created_at DESC`,
       [customerIdOrPhone, customerIdOrPhone]
     );
     if (!res[0]) return [];
@@ -1910,14 +1935,55 @@ export const dbService = {
       throw new Error('Please select either Cash or UPI payment method.');
     }
 
-    const newStatus = method === 'cash' ? 'CUSTOMER_SELECTED_CASH' : 'CUSTOMER_SELECTED_UPI';
+    // Selecting payment method prepares the checkout option without completing or advancing to partner verification
     db.run(
       `UPDATE partner_bills SET
          payment_method = ?,
-         status = ?,
+         status = 'AWAITING_CUSTOMER_CONFIRMATION',
          customer_approved_at = ?
        WHERE id = ?`,
-      [method, newStatus, new Date().toISOString(), bill.id]
+      [method, new Date().toISOString(), bill.id]
+    );
+
+    persistDatabase();
+    return this.getBillById(bill.id);
+  },
+
+  customerConfirmBillPayment(billId, customerId, paymentMethod, utrNumber = '') {
+    const bill = this.getBillById(billId);
+    if (!bill) throw new Error('Bill not found.');
+
+    if (bill.status === 'COMPLETED') {
+      throw new Error(`Bill #${bill.billNumber} has already been completed.`);
+    }
+    if (bill.status === 'CANCELLED' || bill.status === 'REJECTED') {
+      throw new Error(`Bill #${bill.billNumber} has been ${bill.status.toLowerCase()}.`);
+    }
+
+    const method = String(paymentMethod || bill.paymentMethod || 'cash').toLowerCase().trim();
+    if (method !== 'cash' && method !== 'upi') {
+      throw new Error('Please select either Cash or UPI payment method.');
+    }
+
+    const nowIso = new Date().toISOString();
+    const cleanUtr = String(utrNumber || '').trim();
+
+    db.run(
+      `UPDATE partner_bills SET
+         payment_method = ?,
+         utr_number = ?,
+         status = 'PENDING_PARTNER_VERIFICATION',
+         customer_confirmed_at = ?,
+         customer_approved_at = ?
+       WHERE id = ?`,
+      [method, cleanUtr, nowIso, nowIso, bill.id]
+    );
+
+    this.logAudit(
+      'customer',
+      bill.customerName,
+      'CONFIRM_BILL_PAYMENT',
+      `Customer confirmed in-store payment of ₹${bill.payableAmount} via ${method.toUpperCase()}${cleanUtr ? ` (UTR: ${cleanUtr})` : ''} for Bill #${bill.billNumber}. Awaiting cashier verification.`
     );
 
     persistDatabase();
@@ -1928,10 +1994,6 @@ export const dbService = {
     const bill = this.getBillById(billId);
     if (!bill) throw new Error('Bill not found.');
     if (bill.partnerId !== partnerId) throw new Error('Unauthorized partner.');
-
-    if (bill.status !== 'CUSTOMER_SELECTED_CASH' && bill.status !== 'CUSTOMER_SELECTED_UPI' && bill.status !== 'PENDING_CUSTOMER_APPROVAL') {
-      throw new Error(`Bill cannot be submitted for admin verification in status "${bill.status}".`);
-    }
 
     db.run(
       `UPDATE partner_bills SET
@@ -2003,7 +2065,7 @@ export const dbService = {
     if (!bill) throw new Error('Bill not found.');
     if (bill.partnerId !== partnerId) throw new Error('Unauthorized partner.');
 
-    // Prevent duplicate approvals
+    // Concurrency / Idempotency protection: Prevent duplicate approvals
     if (bill.status === 'COMPLETED') {
       throw new Error(`Bill #${bill.billNumber} has already been completed and coins deducted.`);
     }
@@ -2013,7 +2075,7 @@ export const dbService = {
 
     const nowIso = new Date().toISOString();
 
-    // Revalidate customer coin account balance before deduction
+    // Revalidate customer coin account balance before permanent deduction
     const coinAcc = this.getCoinAccount(bill.customerId);
     if (bill.coinsToRedeem > 0 && coinAcc.availableBalance < bill.coinsToRedeem) {
       throw new Error(`Customer has only ${coinAcc.availableBalance} B5 Coins available. Cannot deduct ${bill.coinsToRedeem} coins.`);
@@ -2021,7 +2083,7 @@ export const dbService = {
 
     const receiptNumber = `RCP-PTR-${Date.now().toString().slice(-6)}`;
 
-    // Deduct coins if any were used
+    // Deduct coins from Customer Wallet
     if (bill.coinsToRedeem > 0) {
       const newBalance = coinAcc.availableBalance - bill.coinsToRedeem;
       const newTotalRedeemed = coinAcc.totalRedeemed + bill.coinsToRedeem;
@@ -2031,7 +2093,7 @@ export const dbService = {
         [newBalance, newTotalRedeemed, bill.customerId]
       );
 
-      // Record in double-entry coin ledger
+      // Record in double-entry coin ledger for customer
       this.recordCoinTransaction({
         id: `TX-BILL-${Date.now()}`,
         customerId: bill.customerId,
@@ -2057,11 +2119,15 @@ export const dbService = {
       });
     }
 
-    // Update partner sales and commission ledger
+    // Partner Reward Coins & Sales Oversight
     const partner = this.getPartnerById(bill.partnerId);
+    let partnerRewardCoins = 0;
     if (partner) {
       const commissionEarned = Math.floor(bill.originalBillAmount * (partner.commissionRate / 100));
       const settlementDue = bill.originalBillAmount - commissionEarned;
+      const bonusMult = partner.specialCoinBonusMultiplier || 1.5;
+      partnerRewardCoins = Math.floor(bill.originalBillAmount * (0.05 * bonusMult));
+
       db.run(
         `UPDATE partner_shops SET
            total_sales = total_sales + ?,
@@ -2071,6 +2137,32 @@ export const dbService = {
          WHERE id = ?`,
         [bill.originalBillAmount, commissionEarned, settlementDue, partner.id]
       );
+
+      // Credit partner user reward coins if partner account exists
+      const partnerUser = this.findUserByMobile(partner.mobile) || this.findUserById('user-' + partner.id);
+      if (partnerUser && partnerRewardCoins > 0) {
+        const partnerCoinAcc = this.getCoinAccount(partnerUser.id);
+        const pNewBal = partnerCoinAcc.availableBalance + partnerRewardCoins;
+        const pNewEarned = partnerCoinAcc.totalEarned + partnerRewardCoins;
+
+        db.run(
+          "UPDATE coin_accounts SET available_balance = ?, total_earned = ? WHERE customer_id = ?",
+          [pNewBal, pNewEarned, partnerUser.id]
+        );
+
+        this.recordCoinTransaction({
+          id: `TX-PTR-REW-${Date.now()}`,
+          customerId: partnerUser.id,
+          orderId: bill.billNumber,
+          orderNumber: bill.billNumber,
+          type: 'partner_sales_reward',
+          amount: partnerRewardCoins,
+          reason: `Partner retail reward for in-store Bill #${bill.billNumber} (${bill.customerName})`,
+          balanceAfter: pNewBal,
+          status: 'completed',
+          timestamp: nowIso,
+        });
+      }
     }
 
     db.run(
@@ -2079,17 +2171,50 @@ export const dbService = {
          receipt_number = ?,
          partner_received_at = ?,
          admin_decision_at = ?,
-         admin_decision_by = 'Partner Approved',
-         admin_notes = ?
+         admin_decision_by = 'Partner Cashier Verified',
+         admin_notes = ?,
+         partner_reward_coins = ?
        WHERE id = ?`,
-      [receiptNumber, nowIso, nowIso, notes || 'Payment verified by Partner', bill.id]
+      [receiptNumber, nowIso, nowIso, notes || 'Payment verified in person by store partner', partnerRewardCoins, bill.id]
     );
 
     this.logAudit(
       'partner',
       bill.partnerName,
       'PARTNER_APPROVE_BILL',
-      `Partner approved Bill #${bill.billNumber}: ₹${bill.payableAmount} paid via ${bill.paymentMethod || 'In-Store'}, ${bill.coinsToRedeem} B5 Coins deducted.`
+      `Partner approved Bill #${bill.billNumber}: ₹${bill.payableAmount} verified via ${bill.paymentMethod || 'In-Store'}, ${bill.coinsToRedeem} B5 Coins deducted, ${partnerRewardCoins} Partner Reward Coins granted.`
+    );
+
+    persistDatabase();
+    return this.getBillById(bill.id);
+  },
+
+  partnerRejectBill(billId, partnerId, reason = '') {
+    const bill = this.getBillById(billId);
+    if (!bill) throw new Error('Bill not found.');
+    if (bill.partnerId !== partnerId) throw new Error('Unauthorized partner.');
+
+    if (bill.status === 'COMPLETED') {
+      throw new Error('Cannot reject a bill that has already been completed.');
+    }
+
+    const nowIso = new Date().toISOString();
+    const cleanReason = reason || 'Payment not received / Disputed by Store Partner';
+
+    db.run(
+      `UPDATE partner_bills SET
+         status = 'REJECTED',
+         admin_notes = ?,
+         admin_decision_at = ?
+       WHERE id = ?`,
+      [cleanReason, nowIso, bill.id]
+    );
+
+    this.logAudit(
+      'partner',
+      bill.partnerName,
+      'REJECT_PARTNER_BILL',
+      `Partner rejected/disputed Bill #${bill.billNumber}. Reason: ${cleanReason}. Zero coins deducted.`
     );
 
     persistDatabase();
@@ -2097,33 +2222,7 @@ export const dbService = {
   },
 
   cancelPartnerBill(billId, partnerId, reason = '') {
-    const bill = this.getBillById(billId);
-    if (!bill) throw new Error('Bill not found.');
-    if (bill.partnerId !== partnerId) throw new Error('Unauthorized partner.');
-
-    if (bill.status === 'COMPLETED') {
-      throw new Error('Cannot cancel a bill that has already been completed.');
-    }
-
-    const nowIso = new Date().toISOString();
-    db.run(
-      `UPDATE partner_bills SET
-         status = 'CANCELLED',
-         admin_notes = ?,
-         admin_decision_at = ?
-       WHERE id = ?`,
-      [reason || 'Cancelled by Store Partner', nowIso, bill.id]
-    );
-
-    this.logAudit(
-      'partner',
-      bill.partnerName,
-      'CANCEL_PARTNER_BILL',
-      `Partner cancelled Bill #${bill.billNumber}. Zero coins deducted.`
-    );
-
-    persistDatabase();
-    return this.getBillById(bill.id);
+    return this.partnerRejectBill(billId, partnerId, reason || 'Cancelled by store partner');
   },
 
   getPendingAdminBills() {
@@ -2834,6 +2933,9 @@ function mapBillRow(cols, row) {
     status: row[cols.indexOf('status')],
     rejectionReason: row[cols.indexOf('admin_notes')],
     customerApprovedAt: row[cols.indexOf('customer_approved_at')],
+    customerConfirmedAt: cols.indexOf('customer_confirmed_at') !== -1 ? row[cols.indexOf('customer_confirmed_at')] : row[cols.indexOf('customer_approved_at')],
+    utrNumber: cols.indexOf('utr_number') !== -1 ? row[cols.indexOf('utr_number')] : null,
+    partnerRewardCoins: cols.indexOf('partner_reward_coins') !== -1 ? Number(row[cols.indexOf('partner_reward_coins')] || 0) : 0,
     partnerReceivedAt: row[cols.indexOf('partner_received_at')],
     adminDecisionAt: row[cols.indexOf('admin_decision_at')],
     adminDecisionBy: row[cols.indexOf('admin_decision_by')],

@@ -28,6 +28,8 @@ import {
   ArrowRight,
   ShieldCheck,
   Lock,
+  XCircle,
+  Loader2,
 } from 'lucide-react';
 import { StorageService, subscribe } from '../../services/storage';
 import { User, Address, AddressType, PartnerBill } from '../../types';
@@ -94,6 +96,9 @@ export const CustomerAccount: React.FC<CustomerAccountProps> = ({
   // Pending In-Store Bills
   const [pendingBills, setPendingBills] = useState<PartnerBill[]>([]);
   const [billNotice, setBillNotice] = useState<string | null>(null);
+  const [billMethodSelection, setBillMethodSelection] = useState<Record<string, 'cash' | 'upi'>>({});
+  const [billUtrInput, setBillUtrInput] = useState<Record<string, string>>({});
+  const [isConfirmingBillId, setIsConfirmingBillId] = useState<string | null>(null);
 
   const isLoggedIn = Boolean(currentUser && currentUser.id && !currentUser.isGuest);
 
@@ -343,25 +348,34 @@ export const CustomerAccount: React.FC<CustomerAccountProps> = ({
   };
 
   // Handle Select In-Store Bill Payment
-  const handleCustomerSelectPayment = async (billId: string, paymentMethod: 'cash' | 'upi') => {
+  const handleCustomerSelectPayment = (billId: string, paymentMethod: 'cash' | 'upi') => {
+    setBillMethodSelection((prev) => ({ ...prev, [billId]: paymentMethod }));
+  };
+
+  const handleCustomerConfirmPayment = async (billId: string, paymentMethod: 'cash' | 'upi') => {
+    setIsConfirmingBillId(billId);
     try {
-      const res = await fetch(`/api/customer/bills/${billId}/select-payment`, {
+      const utr = billUtrInput[billId] || '';
+      const res = await fetch(`/api/customer/bills/${billId}/confirm-payment`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ paymentMethod }),
+        body: JSON.stringify({
+          customerId: currentUser.id,
+          paymentMethod,
+          utrNumber: paymentMethod === 'upi' ? utr.trim() : '',
+        }),
       });
       const data = await res.json();
       if (data.success) {
-        if (paymentMethod === 'upi' && data.upiDeepLink) {
-          window.location.href = data.upiDeepLink;
-          setBillNotice(`Selected UPI payment for Bill. UPI app opened. Please pay partner ₹${data.bill.payableAmount}.`);
-        } else {
-          setBillNotice(`Selected Cash payment. Please pay ₹${data.bill.payableAmount} to the partner shop cashier.`);
-        }
+        setBillNotice(`Payment confirmed via ${paymentMethod.toUpperCase()}. Waiting for store cashier verification.`);
         fetchPendingBills();
+      } else {
+        setBillNotice(data.error || 'Failed to confirm payment.');
       }
     } catch (err: any) {
-      setBillNotice('Failed to record payment choice.');
+      setBillNotice(err.message || 'Error confirming payment.');
+    } finally {
+      setIsConfirmingBillId(null);
     }
   };
 
@@ -733,32 +747,141 @@ export const CustomerAccount: React.FC<CustomerAccountProps> = ({
                 </p>
 
                 {/* Customer Payment Choices */}
-                {bill.status === 'PENDING_CUSTOMER_APPROVAL' ? (
-                  <div className="space-y-2 pt-2 border-t border-cream-200">
-                    <p className="text-xs font-bold text-darkbrown-900">Select How You Wish to Pay the Remaining ₹{bill.payableAmount}:</p>
-                    <div className="flex flex-col sm:flex-row gap-2">
-                      <button
-                        onClick={() => handleCustomerSelectPayment(bill.id, 'cash')}
-                        className="flex-1 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl font-bold flex items-center justify-center gap-1.5 transition-colors shadow-2xs"
-                      >
-                        <CreditCard className="w-4 h-4" />
-                        <span>Pay with Cash in Store</span>
-                      </button>
-                      <button
-                        onClick={() => handleCustomerSelectPayment(bill.id, 'upi')}
-                        className="flex-1 py-2.5 bg-indigo-700 hover:bg-indigo-800 text-white rounded-xl font-bold flex items-center justify-center gap-1.5 transition-colors shadow-2xs"
-                      >
-                        <QrCode className="w-4 h-4" />
-                        <span>Pay via UPI / GPay Deep Link</span>
-                      </button>
+                {(() => {
+                  const isConfirmed =
+                    bill.status === 'PENDING_PARTNER_VERIFICATION' ||
+                    bill.status === 'PAYMENT_CONFIRMED_BY_CUSTOMER';
+                  const isCompleted = bill.status === 'COMPLETED';
+                  const isRejected = bill.status === 'REJECTED' || bill.status === 'CANCELLED';
+                  const currentMode = billMethodSelection[bill.id] || (bill.paymentMethod === 'cash' ? 'cash' : 'upi');
+
+                  if (isCompleted) {
+                    return (
+                      <div className="pt-2 border-t border-cream-200 text-emerald-800 font-bold text-xs flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                          <span>Payment Verified &amp; Receipt Issued!</span>
+                        </div>
+                        <span className="font-mono text-darkbrown-900 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                          {bill.receiptNumber || 'Receipt Available'}
+                        </span>
+                      </div>
+                    );
+                  }
+
+                  if (isRejected) {
+                    return (
+                      <div className="pt-2 border-t border-rose-200 text-rose-800 font-bold text-xs flex items-center gap-1.5">
+                        <XCircle className="w-4 h-4 text-rose-600" />
+                        <span>Payment Rejected / Disputed by Cashier. Zero coins deducted.</span>
+                      </div>
+                    );
+                  }
+
+                  if (isConfirmed) {
+                    return (
+                      <div className="pt-2 border-t border-amber-200 bg-amber-50/70 p-3 rounded-xl text-amber-900 text-xs space-y-1">
+                        <div className="font-black flex items-center gap-1.5 text-amber-900">
+                          <Clock className="w-4 h-4 text-amber-600 animate-spin" />
+                          <span>Waiting for Partner Cashier Verification</span>
+                        </div>
+                        <p className="text-[11px] text-amber-800">
+                          You confirmed ₹{bill.payableAmount} paid via <strong>{bill.paymentMethod?.toUpperCase()}</strong>{bill.utrNumber ? ` (UTR: ${bill.utrNumber})` : ''}. The cashier is currently verifying.
+                        </p>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="space-y-3 pt-2 border-t border-cream-200">
+                      <p className="text-xs font-bold text-darkbrown-900">
+                        Step 1: Select Payment Method:
+                      </p>
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleCustomerSelectPayment(bill.id, 'upi')}
+                          className={`flex-1 py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 border-2 transition-all ${
+                            currentMode === 'upi'
+                              ? 'border-blue-700 bg-blue-50 text-blue-900 shadow-xs'
+                              : 'border-cream-300 bg-white text-gray-700 hover:border-blue-300'
+                          }`}
+                        >
+                          <QrCode className="w-4 h-4 text-blue-700" />
+                          <span>Option A: GPay / UPI</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleCustomerSelectPayment(bill.id, 'cash')}
+                          className={`flex-1 py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 border-2 transition-all ${
+                            currentMode === 'cash'
+                              ? 'border-emerald-700 bg-emerald-50 text-emerald-900 shadow-xs'
+                              : 'border-cream-300 bg-white text-gray-700 hover:border-emerald-300'
+                          }`}
+                        >
+                          <CreditCard className="w-4 h-4 text-emerald-700" />
+                          <span>Option B: Cash at Store</span>
+                        </button>
+                      </div>
+
+                      {currentMode === 'upi' && (
+                        <div className="p-3 bg-blue-50/60 rounded-xl border border-blue-200 space-y-2 text-xs">
+                          <div className="flex justify-between items-center text-blue-950 font-bold">
+                            <span>Store UPI ID:</span>
+                            <span className="font-mono bg-white px-2 py-0.5 rounded border border-blue-200">
+                              {bill.merchantUpiId || 'magizhcafee-3@okhdfcbank'}
+                            </span>
+                          </div>
+                          <div>
+                            <input
+                              type="text"
+                              value={billUtrInput[bill.id] || ''}
+                              onChange={(e) =>
+                                setBillUtrInput((prev) => ({ ...prev, [bill.id]: e.target.value }))
+                              }
+                              placeholder="Enter 12-digit UPI UTR / Reference ID"
+                              className="w-full px-3 py-2 bg-white border border-blue-300 rounded-lg font-mono text-xs focus:outline-none"
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleCustomerConfirmPayment(bill.id, 'upi')}
+                            disabled={isConfirmingBillId === bill.id}
+                            className="w-full py-2.5 bg-gradient-to-r from-blue-700 to-indigo-700 hover:from-blue-800 hover:to-indigo-800 text-white rounded-xl font-black text-xs shadow-xs flex items-center justify-center gap-1.5 disabled:opacity-50"
+                          >
+                            {isConfirmingBillId === bill.id ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
+                            )}
+                            <span>I Have Completed UPI Payment (₹{bill.payableAmount})</span>
+                          </button>
+                        </div>
+                      )}
+
+                      {currentMode === 'cash' && (
+                        <div className="p-3 bg-emerald-50/60 rounded-xl border border-emerald-200 space-y-2 text-xs">
+                          <p className="text-[11px] text-emerald-950">
+                            Please hand <strong>₹{bill.payableAmount}</strong> cash to the store cashier, then confirm below:
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => handleCustomerConfirmPayment(bill.id, 'cash')}
+                            disabled={isConfirmingBillId === bill.id}
+                            className="w-full py-2.5 bg-gradient-to-r from-emerald-700 to-teal-800 hover:from-emerald-800 hover:to-teal-900 text-white rounded-xl font-black text-xs shadow-xs flex items-center justify-center gap-1.5 disabled:opacity-50"
+                          >
+                            {isConfirmingBillId === bill.id ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-200" />
+                            )}
+                            <span>I Have Paid Cash (₹{bill.payableAmount})</span>
+                          </button>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ) : (
-                  <div className="pt-2 border-t border-cream-200 text-emerald-800 font-bold text-[11px] flex items-center gap-1.5">
-                    <Check className="w-4 h-4 text-emerald-600" />
-                    <span>Payment choice selected. Partner will confirm payment upon receiving in store.</span>
-                  </div>
-                )}
+                  );
+                })()}
               </div>
             ))}
           </div>

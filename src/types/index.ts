@@ -311,9 +311,11 @@ export interface PartnerShop {
 
 export type PartnerBillStatus =
   | 'PENDING_CUSTOMER_APPROVAL'
+  | 'AWAITING_CUSTOMER_CONFIRMATION'
   | 'CUSTOMER_SELECTED_CASH'
   | 'CUSTOMER_SELECTED_UPI'
   | 'PAYMENT_CONFIRMED_BY_CUSTOMER'
+  | 'PENDING_PARTNER_VERIFICATION'
   | 'PENDING_ADMIN_APPROVAL'
   | 'COMPLETED'
   | 'REJECTED'
@@ -336,6 +338,9 @@ export interface PartnerBill {
   itemsSummary?: string;
   paymentMethod?: string;
   customerPaymentChoice?: string;
+  utrNumber?: string;
+  customerConfirmedAt?: string;
+  partnerRewardCoins?: number;
   status: PartnerBillStatus;
   rejectionReason?: string;
   customerApprovedAt?: string;
@@ -345,6 +350,7 @@ export interface PartnerBill {
   adminNotes?: string;
   receiptNumber?: string;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface CoinNotification {

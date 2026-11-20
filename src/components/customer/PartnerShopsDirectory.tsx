@@ -20,6 +20,8 @@ import {
   ExternalLink,
   ChevronRight,
   CreditCard,
+  XCircle,
+  Loader2,
 } from 'lucide-react';
 import { StorageService, subscribe } from '../../services/storage';
 import { PartnerShop, PartnerBill, User } from '../../types';
@@ -43,6 +45,9 @@ export const PartnerShopsDirectory: React.FC<PartnerShopsDirectoryProps> = ({ on
   const [selectedPaymentMode, setSelectedPaymentMode] = useState<'upi' | 'cash' | null>(null);
   const [isUpdatingPaymentMode, setIsUpdatingPaymentMode] = useState(false);
   const [completedBillReceipt, setCompletedBillReceipt] = useState<PartnerBill | null>(null);
+  const [upiUtrInput, setUpiUtrInput] = useState('');
+  const [isConfirmingPayment, setIsConfirmingPayment] = useState(false);
+  const [confirmError, setConfirmError] = useState<string | null>(null);
 
   // In-Store Estimate Calculator State
   const [activeShopForPay, setActiveShopForPay] = useState<PartnerShop | null>(null);
@@ -61,11 +66,33 @@ export const PartnerShopsDirectory: React.FC<PartnerShopsDirectoryProps> = ({ on
         const data = await res.json();
         if (data.success && Array.isArray(data.bills)) {
           setPendingBills(data.bills);
-          // If a modal bill is currently open, refresh its state
+          // If a modal bill is currently open, refresh its state or detect completion
           if (activeBillModal) {
             const updated = data.bills.find((b: PartnerBill) => b.id === activeBillModal.id);
             if (updated) {
-              setActiveBillModal(updated);
+              if (updated.status === 'COMPLETED') {
+                setCompletedBillReceipt(updated);
+                setActiveBillModal(null);
+                setCoinBalance(StorageService.getCoinAccount(currentUser.id).availableBalance);
+              } else {
+                setActiveBillModal(updated);
+              }
+            } else {
+              // Direct single bill check in case it transitioned to completed
+              fetch(`/api/customer/bills/${activeBillModal.id}`)
+                .then((r) => r.json())
+                .then((singleData) => {
+                  if (singleData.success && singleData.bill) {
+                    if (singleData.bill.status === 'COMPLETED') {
+                      setCompletedBillReceipt(singleData.bill);
+                      setActiveBillModal(null);
+                      setCoinBalance(StorageService.getCoinAccount(currentUser.id).availableBalance);
+                    } else {
+                      setActiveBillModal(singleData.bill);
+                    }
+                  }
+                })
+                .catch(() => {});
             }
           }
         }
@@ -79,8 +106,8 @@ export const PartnerShopsDirectory: React.FC<PartnerShopsDirectoryProps> = ({ on
     // Initial fetch
     fetchPendingBills();
 
-    // Poll every 3 seconds for instant status synchronization
-    const interval = setInterval(fetchPendingBills, 3000);
+    // Poll every 2.5 seconds for instant status synchronization
+    const interval = setInterval(fetchPendingBills, 2500);
 
     const unsub = subscribe('partnersChanged', () => {
       setPartners(StorageService.getApprovedPartners());
@@ -94,7 +121,7 @@ export const PartnerShopsDirectory: React.FC<PartnerShopsDirectoryProps> = ({ on
       unsub();
       unsubCoin();
     };
-  }, [currentUser.id, currentUser.mobile]);
+  }, [currentUser.id, currentUser.mobile, activeBillModal?.id]);
 
   const districts = ['All', ...new Set(partners.map((p) => p.district))];
 
@@ -131,25 +158,38 @@ export const PartnerShopsDirectory: React.FC<PartnerShopsDirectoryProps> = ({ on
     setCoinsToRedeem(Math.min(coinBalance, newMaxCap));
   };
 
-  // Select Payment Option (Option A: UPI/GPay, Option B: Cash at Store)
-  const handleSelectPaymentMethod = async (bill: PartnerBill, method: 'upi' | 'cash') => {
-    setIsUpdatingPaymentMode(true);
+  // Select Payment Option locally (Option A: UPI/GPay, Option B: Cash at Store)
+  const handleSelectPaymentMethod = (method: 'upi' | 'cash') => {
     setSelectedPaymentMode(method);
+    setConfirmError(null);
+  };
+
+  // Customer Confirmation Action (I Have Paid Cash / I Have Completed UPI Payment)
+  const handleConfirmCustomerPayment = async (method: 'upi' | 'cash') => {
+    if (!activeBillModal) return;
+    setIsConfirmingPayment(true);
+    setConfirmError(null);
     try {
-      const res = await fetch(`/api/customer/bills/${bill.id}/select-payment`, {
+      const res = await fetch(`/api/customer/bills/${activeBillModal.id}/confirm-payment`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ paymentMethod: method, customerId: currentUser.id }),
+        body: JSON.stringify({
+          customerId: currentUser.id,
+          paymentMethod: method,
+          utrNumber: method === 'upi' ? upiUtrInput.trim() : '',
+        }),
       });
       const data = await res.json();
-      if (data.success && data.bill) {
+      if (!res.ok || !data.success) {
+        setConfirmError(data.error || 'Failed to submit payment confirmation.');
+      } else {
         setActiveBillModal(data.bill);
         fetchPendingBills();
       }
     } catch (err: any) {
-      console.error('Error selecting payment:', err);
+      setConfirmError(err.message || 'Network error confirming payment.');
     } finally {
-      setIsUpdatingPaymentMode(false);
+      setIsConfirmingPayment(false);
     }
   };
 
@@ -286,10 +326,12 @@ export const PartnerShopsDirectory: React.FC<PartnerShopsDirectoryProps> = ({ on
                       <span className="text-[11px] font-bold px-2.5 py-1 rounded-xl bg-orange-100 text-orange-800 border border-orange-200 flex items-center gap-1">
                         <Clock className="w-3 h-3 text-orange-600 animate-spin" />
                         <span>
-                          {isUpiSelected
-                            ? 'UPI Payment Selected'
+                          {bill.status === 'PENDING_PARTNER_VERIFICATION' || bill.status === 'PAYMENT_CONFIRMED_BY_CUSTOMER'
+                            ? 'Waiting for Cashier Verification'
+                            : isUpiSelected
+                            ? 'UPI Selected (Awaiting Confirmation)'
                             : isCashSelected
-                            ? 'Cash Payment Selected'
+                            ? 'Cash Selected (Awaiting Confirmation)'
                             : 'Pending Your Payment'}
                         </span>
                       </span>
@@ -342,8 +384,9 @@ export const PartnerShopsDirectory: React.FC<PartnerShopsDirectoryProps> = ({ on
                       onClick={() => {
                         setActiveBillModal(bill);
                         setSelectedPaymentMode(
-                          isUpiSelected ? 'upi' : isCashSelected ? 'cash' : null
+                          bill.paymentMethod === 'cash' ? 'cash' : 'upi'
                         );
+                        setUpiUtrInput(bill.utrNumber || '');
                       }}
                       className="px-5 py-2.5 bg-gradient-to-r from-magizh-800 to-magizh-900 hover:from-magizh-900 hover:to-black text-white text-xs font-black rounded-xl shadow-md transition-all flex items-center gap-2"
                     >
@@ -415,171 +458,254 @@ export const PartnerShopsDirectory: React.FC<PartnerShopsDirectoryProps> = ({ on
               </div>
 
               {/* Payment Selection Tab Options (Option A vs Option B) */}
-              <div className="space-y-3">
-                <label className="block text-xs font-black text-darkbrown-900 uppercase tracking-wider">
-                  Select Payment Method:
-                </label>
+              {(() => {
+                const isConfirmed =
+                  activeBillModal.status === 'PENDING_PARTNER_VERIFICATION' ||
+                  activeBillModal.status === 'PAYMENT_CONFIRMED_BY_CUSTOMER';
+                const isRejected =
+                  activeBillModal.status === 'REJECTED' ||
+                  activeBillModal.status === 'CANCELLED';
 
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => handleSelectPaymentMethod(activeBillModal, 'upi')}
-                    disabled={isUpdatingPaymentMode}
-                    className={`p-3.5 rounded-2xl border-2 text-left transition-all flex flex-col justify-between gap-2 ${
-                      selectedPaymentMode === 'upi' || activeBillModal.status === 'CUSTOMER_SELECTED_UPI'
-                        ? 'border-magizh-700 bg-magizh-50 shadow-sm'
-                        : 'border-cream-300 hover:border-magizh-400 bg-white'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between w-full">
-                      <Smartphone className="w-5 h-5 text-magizh-800" />
-                      <span className="text-[10px] font-black uppercase text-magizh-800 bg-magizh-100 px-2 py-0.5 rounded-full">
-                        Instant
-                      </span>
-                    </div>
-                    <div>
-                      <div className="text-xs font-black text-darkbrown-900">
-                        Option A: GPay / UPI
+                if (isRejected) {
+                  return (
+                    <div className="p-4 bg-rose-50 rounded-2xl border border-rose-300 text-xs text-rose-900 space-y-2 animate-in fade-in">
+                      <div className="flex items-center gap-2 font-black text-sm text-rose-900">
+                        <XCircle className="w-5 h-5 text-rose-600" />
+                        <span>Payment Disputed / Rejected by Partner Cashier</span>
                       </div>
-                      <div className="text-[10px] text-gray-500">
-                        Pay to Store's Registered UPI
-                      </div>
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => handleSelectPaymentMethod(activeBillModal, 'cash')}
-                    disabled={isUpdatingPaymentMode}
-                    className={`p-3.5 rounded-2xl border-2 text-left transition-all flex flex-col justify-between gap-2 ${
-                      selectedPaymentMode === 'cash' || activeBillModal.status === 'CUSTOMER_SELECTED_CASH'
-                        ? 'border-emerald-700 bg-emerald-50 shadow-sm'
-                        : 'border-cream-300 hover:border-emerald-400 bg-white'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between w-full">
-                      <Banknote className="w-5 h-5 text-emerald-700" />
-                      <span className="text-[10px] font-black uppercase text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full">
-                        Counter
-                      </span>
-                    </div>
-                    <div>
-                      <div className="text-xs font-black text-darkbrown-900">
-                        Option B: Cash at Store
-                      </div>
-                      <div className="text-[10px] text-gray-500">
-                        Pay cash directly to cashier
-                      </div>
-                    </div>
-                  </button>
-                </div>
-              </div>
-
-              {/* PAYMENT OPTION A: GPAY / UPI DETAILS */}
-              {(selectedPaymentMode === 'upi' || activeBillModal.status === 'CUSTOMER_SELECTED_UPI') && (
-                <div className="p-4 bg-gradient-to-br from-blue-50/70 to-indigo-50/70 rounded-2xl border border-blue-200 space-y-4 animate-in fade-in">
-                  <div className="flex items-center gap-2">
-                    <QrCode className="w-5 h-5 text-blue-700" />
-                    <h4 className="text-xs font-black text-blue-900 uppercase tracking-wider">
-                      Option A: GPay / UPI Dynamic QR &amp; Direct Pay
-                    </h4>
-                  </div>
-
-                  <div className="flex flex-col sm:flex-row items-center gap-4 bg-white p-4 rounded-xl border border-blue-100 shadow-2xs">
-                    {/* Dynamic QR Code */}
-                    <div className="shrink-0 text-center">
-                      <img
-                        src={getQrImageUrl(activeBillModal)}
-                        alt="Store UPI QR Code"
-                        className="w-36 h-36 rounded-lg border border-gray-200 mx-auto shadow-xs"
-                      />
-                      <span className="text-[9px] text-gray-500 font-bold block mt-1">
-                        Scan with GPay / PhonePe / Paytm
-                      </span>
-                    </div>
-
-                    {/* Store UPI Details */}
-                    <div className="space-y-2 text-xs flex-1 w-full">
-                      <div>
-                        <span className="text-[10px] text-gray-500 uppercase font-bold block">
-                          Store's Registered UPI ID
-                        </span>
-                        <span className="font-mono font-black text-sm text-blue-950 bg-blue-50 px-2.5 py-1 rounded-lg inline-block border border-blue-200 select-all">
-                          {activeBillModal.merchantUpiId || 'magizhcafee-3@okhdfcbank'}
-                        </span>
-                      </div>
-
-                      <div>
-                        <span className="text-[10px] text-gray-500 uppercase font-bold block">
-                          Prefilled Payable Amount
-                        </span>
-                        <span className="text-lg font-black text-emerald-800 font-mono">
-                          ₹{Number(activeBillModal.payableAmount).toFixed(2)}
-                        </span>
-                      </div>
-
-                      {/* Direct GPay / UPI App Button */}
-                      <a
-                        href={getUpiUrl(activeBillModal)}
-                        className="w-full py-2.5 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-2 transition-all"
-                      >
-                        <Smartphone className="w-4 h-4" />
-                        <span>Open GPay / Any UPI App</span>
-                        <ExternalLink className="w-3.5 h-3.5" />
-                      </a>
-                    </div>
-                  </div>
-
-                  {/* Customer Instruction */}
-                  <div className="p-3 bg-blue-100/60 rounded-xl border border-blue-200 text-xs text-blue-950 space-y-1">
-                    <p className="font-bold">Instructions for Customer:</p>
-                    <p className="text-[11px] text-blue-900 leading-relaxed">
-                      1. Pay using the QR code or GPay button above with prefilled amount ₹{activeBillModal.payableAmount}.<br />
-                      2. After payment, show the transaction confirmation to the store cashier.<br />
-                      3. Cashier will verify the bank receipt and approve your bill.
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* PAYMENT OPTION B: CASH AT THE STORE */}
-              {(selectedPaymentMode === 'cash' || activeBillModal.status === 'CUSTOMER_SELECTED_CASH') && (
-                <div className="p-4 bg-gradient-to-br from-emerald-50/70 to-teal-50/70 rounded-2xl border border-emerald-200 space-y-3 animate-in fade-in">
-                  <div className="flex items-center gap-2">
-                    <Banknote className="w-5 h-5 text-emerald-700" />
-                    <h4 className="text-xs font-black text-emerald-900 uppercase tracking-wider">
-                      Option B: Cash Payment at Store Counter
-                    </h4>
-                  </div>
-
-                  <div className="bg-white p-4 rounded-xl border border-emerald-100 space-y-2">
-                    <div className="flex justify-between items-center">
-                      <span className="text-xs text-gray-600 font-medium">Exact Cash to Hand Over:</span>
-                      <span className="text-xl font-black text-emerald-800 font-mono">
-                        ₹{activeBillModal.payableAmount}
-                      </span>
-                    </div>
-
-                    <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200 text-xs text-emerald-950 space-y-1">
-                      <p className="font-bold">Instructions for Customer:</p>
-                      <p className="text-[11px] text-emerald-900">
-                        Please pay <strong>₹{activeBillModal.payableAmount}</strong> in cash at the counter. The cashier will verify the cash received and approve the bill.
+                      <p className="text-[11px] text-rose-800">
+                        Reason: {activeBillModal.rejectionReason || 'Payment was not verified by the cashier'}. Zero B5 Coins were deducted from your wallet.
                       </p>
                     </div>
-                  </div>
-                </div>
-              )}
+                  );
+                }
 
-              {/* Waiting Status Alert */}
-              <div className="p-3.5 bg-amber-50 rounded-2xl border border-amber-200 text-xs text-amber-900 flex items-center gap-3">
-                <Clock className="w-5 h-5 text-amber-600 shrink-0 animate-spin" />
-                <div>
-                  <span className="font-black block">Waiting for Partner Cashier Verification</span>
-                  <span className="text-[11px] text-amber-800">
-                    Once the cashier confirms payment, your bill will automatically complete, {activeBillModal.coinsToRedeem} B5 Coins will be deducted, and your official receipt will be generated.
-                  </span>
-                </div>
-              </div>
+                if (isConfirmed) {
+                  return (
+                    <div className="p-5 bg-amber-50 rounded-2xl border-2 border-amber-300 text-xs text-amber-950 space-y-3 animate-in fade-in">
+                      <div className="flex items-center gap-2 font-black text-sm text-amber-900">
+                        <Clock className="w-5 h-5 text-amber-600 animate-spin" />
+                        <span>Waiting for Partner Cashier Verification</span>
+                      </div>
+                      <div className="bg-white/80 p-3.5 rounded-xl border border-amber-200 space-y-1.5">
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Confirmed Payment Method:</span>
+                          <span className="font-black uppercase text-darkbrown-900">{activeBillModal.paymentMethod || 'UPI'}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Amount Paid to Store:</span>
+                          <span className="font-mono font-black text-emerald-800">₹{activeBillModal.payableAmount}</span>
+                        </div>
+                        {activeBillModal.utrNumber && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">UPI Reference / UTR:</span>
+                            <span className="font-mono font-bold text-blue-900">{activeBillModal.utrNumber}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between text-b5-800 font-bold pt-1 border-t border-amber-200">
+                          <span>Coins Reserved:</span>
+                          <span>{activeBillModal.coinsToRedeem} B5 Coins (will be debited upon cashier approval)</span>
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-amber-800 leading-relaxed">
+                        The store cashier is reviewing your payment. As soon as the cashier verifies, your official receipt will appear automatically.
+                      </p>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <label className="block text-xs font-black text-darkbrown-900 uppercase tracking-wider">
+                        Step 1: Choose Payment Method:
+                      </label>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <button
+                          type="button"
+                          onClick={() => handleSelectPaymentMethod('upi')}
+                          className={`p-3.5 rounded-2xl border-2 text-left transition-all flex flex-col justify-between gap-2 ${
+                            selectedPaymentMode === 'upi' || activeBillModal.paymentMethod === 'upi'
+                              ? 'border-blue-700 bg-blue-50 shadow-sm'
+                              : 'border-cream-300 hover:border-blue-300 bg-white'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between w-full">
+                            <Smartphone className="w-5 h-5 text-blue-800" />
+                            <span className="text-[10px] font-black uppercase text-blue-800 bg-blue-100 px-2 py-0.5 rounded-full">
+                              Instant
+                            </span>
+                          </div>
+                          <div>
+                            <div className="text-xs font-black text-darkbrown-900">
+                              Option A: GPay / UPI
+                            </div>
+                            <div className="text-[10px] text-gray-500">
+                              Scan QR or open UPI app
+                            </div>
+                          </div>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleSelectPaymentMethod('cash')}
+                          className={`p-3.5 rounded-2xl border-2 text-left transition-all flex flex-col justify-between gap-2 ${
+                            selectedPaymentMode === 'cash' || activeBillModal.paymentMethod === 'cash'
+                              ? 'border-emerald-700 bg-emerald-50 shadow-sm'
+                              : 'border-cream-300 hover:border-emerald-300 bg-white'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between w-full">
+                            <Banknote className="w-5 h-5 text-emerald-700" />
+                            <span className="text-[10px] font-black uppercase text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full">
+                              Counter
+                            </span>
+                          </div>
+                          <div>
+                            <div className="text-xs font-black text-darkbrown-900">
+                              Option B: Cash at Store
+                            </div>
+                            <div className="text-[10px] text-gray-500">
+                              Pay cash directly to cashier
+                            </div>
+                          </div>
+                        </button>
+                      </div>
+                    </div>
+
+                    {confirmError && (
+                      <div className="p-3 bg-red-50 border border-red-200 text-red-900 rounded-xl text-xs font-bold">
+                        {confirmError}
+                      </div>
+                    )}
+
+                    {/* PAYMENT OPTION A: GPAY / UPI DETAILS */}
+                    {selectedPaymentMode === 'upi' && (
+                      <div className="p-4 bg-gradient-to-br from-blue-50/70 to-indigo-50/70 rounded-2xl border border-blue-200 space-y-4 animate-in fade-in">
+                        <div className="flex items-center gap-2">
+                          <QrCode className="w-5 h-5 text-blue-700" />
+                          <h4 className="text-xs font-black text-blue-900 uppercase tracking-wider">
+                            Option A: GPay / UPI Dynamic QR &amp; Direct Pay
+                          </h4>
+                        </div>
+
+                        <div className="flex flex-col sm:flex-row items-center gap-4 bg-white p-4 rounded-xl border border-blue-100 shadow-2xs">
+                          {/* Dynamic QR Code */}
+                          <div className="shrink-0 text-center">
+                            <img
+                              src={getQrImageUrl(activeBillModal)}
+                              alt="Store UPI QR Code"
+                              className="w-36 h-36 rounded-lg border border-gray-200 mx-auto shadow-xs"
+                            />
+                            <span className="text-[9px] text-gray-500 font-bold block mt-1">
+                              Scan with GPay / PhonePe / Paytm
+                            </span>
+                          </div>
+
+                          {/* Store UPI Details */}
+                          <div className="space-y-2 text-xs flex-1 w-full">
+                            <div>
+                              <span className="text-[10px] text-gray-500 uppercase font-bold block">
+                                Store's Registered UPI ID
+                              </span>
+                              <span className="font-mono font-black text-sm text-blue-950 bg-blue-50 px-2.5 py-1 rounded-lg inline-block border border-blue-200 select-all">
+                                {activeBillModal.merchantUpiId || 'magizhcafee-3@okhdfcbank'}
+                              </span>
+                            </div>
+
+                            <div>
+                              <span className="text-[10px] text-gray-500 uppercase font-bold block">
+                                Prefilled Payable Amount
+                              </span>
+                              <span className="text-lg font-black text-emerald-800 font-mono">
+                                ₹{Number(activeBillModal.payableAmount).toFixed(2)}
+                              </span>
+                            </div>
+
+                            {/* Direct GPay / UPI App Button */}
+                            <a
+                              href={getUpiUrl(activeBillModal)}
+                              className="w-full py-2.5 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-2 transition-all"
+                            >
+                              <Smartphone className="w-4 h-4" />
+                              <span>Open GPay / Any UPI App</span>
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </a>
+                          </div>
+                        </div>
+
+                        {/* UPI UTR Input Field */}
+                        <div className="space-y-1">
+                          <label className="text-[11px] font-black text-blue-950 uppercase tracking-wide block">
+                            UPI Transaction Reference / UTR Number:
+                          </label>
+                          <input
+                            type="text"
+                            value={upiUtrInput}
+                            onChange={(e) => setUpiUtrInput(e.target.value)}
+                            placeholder="Enter 12-digit UTR / Transaction Ref ID from your UPI app"
+                            className="w-full px-3.5 py-2.5 bg-white border border-blue-300 rounded-xl font-mono text-xs text-darkbrown-900 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-2xs"
+                          />
+                          <p className="text-[10px] text-blue-800">
+                            Available in your GPay / PhonePe payment success screen.
+                          </p>
+                        </div>
+
+                        {/* Customer Confirmation Button */}
+                        <button
+                          type="button"
+                          onClick={() => handleConfirmCustomerPayment('upi')}
+                          disabled={isConfirmingPayment}
+                          className="w-full py-3.5 px-4 bg-gradient-to-r from-blue-700 via-indigo-700 to-emerald-700 hover:from-blue-800 hover:to-emerald-800 text-white rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                        >
+                          {isConfirmingPayment ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4 text-emerald-300" />}
+                          <span>I Have Completed UPI Payment (₹{activeBillModal.payableAmount})</span>
+                        </button>
+                      </div>
+                    )}
+
+                    {/* PAYMENT OPTION B: CASH AT THE STORE */}
+                    {selectedPaymentMode === 'cash' && (
+                      <div className="p-4 bg-gradient-to-br from-emerald-50/70 to-teal-50/70 rounded-2xl border border-emerald-200 space-y-4 animate-in fade-in">
+                        <div className="flex items-center gap-2">
+                          <Banknote className="w-5 h-5 text-emerald-700" />
+                          <h4 className="text-xs font-black text-emerald-900 uppercase tracking-wider">
+                            Option B: Cash Payment at Store Counter
+                          </h4>
+                        </div>
+
+                        <div className="bg-white p-4 rounded-xl border border-emerald-100 space-y-2">
+                          <div className="flex justify-between items-center">
+                            <span className="text-xs text-gray-600 font-medium">Exact Cash to Hand Over:</span>
+                            <span className="text-xl font-black text-emerald-800 font-mono">
+                              ₹{activeBillModal.payableAmount}
+                            </span>
+                          </div>
+
+                          <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200 text-xs text-emerald-950 space-y-1">
+                            <p className="font-bold">Instructions for Customer:</p>
+                            <p className="text-[11px] text-emerald-900">
+                              Please hand <strong>₹{activeBillModal.payableAmount}</strong> cash to the counter cashier. After paying, click the confirmation button below.
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Customer Confirmation Button */}
+                        <button
+                          type="button"
+                          onClick={() => handleConfirmCustomerPayment('cash')}
+                          disabled={isConfirmingPayment}
+                          className="w-full py-3.5 px-4 bg-gradient-to-r from-emerald-700 to-teal-800 hover:from-emerald-800 hover:to-teal-900 text-white rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                        >
+                          {isConfirmingPayment ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4 text-emerald-200" />}
+                          <span>I Have Paid Cash (₹{activeBillModal.payableAmount})</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               <div className="flex justify-end gap-2 pt-2">
                 <button

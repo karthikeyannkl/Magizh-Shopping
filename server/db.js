@@ -1315,9 +1315,9 @@ export const dbService = {
 
   getPartnerApplications(statusFilter = null) {
     const sql = statusFilter
-      ? "SELECT * FROM partner_shops WHERE application_status = ? OR status = ? ORDER BY created_at DESC"
+      ? "SELECT * FROM partner_shops WHERE LOWER(COALESCE(application_status, status, 'pending')) = ? ORDER BY created_at DESC"
       : "SELECT * FROM partner_shops ORDER BY created_at DESC";
-    const res = statusFilter ? db.exec(sql, [statusFilter, statusFilter]) : db.exec(sql);
+    const res = statusFilter ? db.exec(sql, [statusFilter.trim().toLowerCase()]) : db.exec(sql);
     if (!res[0]) return [];
     return res[0].values.map((v) => mapPartnerRow(res[0].columns, v));
   },

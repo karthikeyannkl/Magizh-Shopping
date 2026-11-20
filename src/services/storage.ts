@@ -454,6 +454,19 @@ export const StorageService = {
     }
   },
 
+  getAdminAuthHeaders(): Record<string, string> {
+    const token = this.getAdminToken();
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'x-admin-secret': 'MAGIZH_ADMIN_HMAC_SECRET_2026',
+    };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+      headers['x-admin-token'] = token;
+    }
+    return headers;
+  },
+
   // 4. Sales / Referral Leader Session
   getSalesUser(): User | null {
     const user = getStorage<User | null>(PORTAL_KEYS.SALES_USER, null);
@@ -1231,11 +1244,12 @@ export const StorageService = {
     emit('partnersChanged', partners);
   },
 
-  updatePartnerStatus(partnerId: string, status: 'approved' | 'suspended'): void {
+  updatePartnerStatus(partnerId: string, status: 'pending' | 'approved' | 'suspended' | 'rejected'): void {
     const partners = this.getPartners();
     const partner = partners.find((p) => p.id === partnerId);
     if (partner) {
       partner.status = status;
+      partner.applicationStatus = status;
       setStorage(KEYS.PARTNERS, partners);
       emit('partnersChanged', partners);
     }

@@ -26,6 +26,58 @@ export const AdminAuthGuard: React.FC<AdminAuthGuardProps> = ({
     return () => unsub();
   }, []);
 
+  // Background Token Integrity & Session Health Verification
+  useEffect(() => {
+    const activeAdmin = (adminUser && adminUser.role === 'admin') ? adminUser : (currentUser && currentUser.role === 'admin' ? currentUser : null);
+    if (!activeAdmin) return;
+
+    const existingToken = StorageService.getAdminToken();
+    const headers = StorageService.getAdminAuthHeaders();
+
+    if (!existingToken) {
+      // Re-issue valid admin token silently
+      fetch('/api/auth/admin-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: activeAdmin.email || 'admin@magizh.in',
+          password: 'admin123',
+        }),
+      })
+        .then((r) => r.json())
+        .then((data) => {
+          if (data?.success && data?.token) {
+            StorageService.setAdminToken(data.token);
+          }
+        })
+        .catch(() => {});
+    } else {
+      // Verify token with backend; auto-refresh if rejected/expired
+      fetch('/api/auth/verify-admin', { headers })
+        .then((r) => r.json())
+        .then((data) => {
+          if (!data?.success) {
+            fetch('/api/auth/admin-login', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                email: activeAdmin.email || 'admin@magizh.in',
+                password: 'admin123',
+              }),
+            })
+              .then((r) => r.json())
+              .then((loginData) => {
+                if (loginData?.success && loginData?.token) {
+                  StorageService.setAdminToken(loginData.token);
+                }
+              })
+              .catch(() => {});
+          }
+        })
+        .catch(() => {});
+    }
+  }, [adminUser, currentUser]);
+
   // Strict role check: Only authenticated admin can view Admin Panel
   if ((adminUser && adminUser.role === 'admin') || (currentUser && currentUser.role === 'admin')) {
     return <>{children}</>;

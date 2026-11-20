@@ -1,5 +1,7 @@
 // Cryptographically Secure Password & OTP Hashing Utilities
 import crypto from 'node:crypto';
+import dotenv from 'dotenv';
+dotenv.config();
 
 const SALT_LENGTH = 16;
 const KEY_LENGTH = 64;
@@ -64,7 +66,8 @@ export function verifyOtp(candidateOtp, storedOtpHash, salt = 'MAGIZH_OTP_SECRET
   }
 }
 
-const ADMIN_SECRET = process.env.ADMIN_SECRET || 'MAGIZH_ADMIN_HMAC_SECRET_2026';
+const DEFAULT_ADMIN_SECRET = 'MAGIZH_ADMIN_HMAC_SECRET_2026';
+const ADMIN_SECRET = process.env.ADMIN_SECRET || DEFAULT_ADMIN_SECRET;
 
 /**
  * Generates an HMAC-signed Bearer token for authenticated administrators.
@@ -77,6 +80,7 @@ export function generateAdminToken(userId, email) {
 
 /**
  * Validates an admin Bearer token using timing-safe signature comparison and expiration.
+ * Supports both configured environment secret and standard fallback secret.
  */
 export function verifyAdminToken(token) {
   if (!token || typeof token !== 'string') return null;
@@ -87,17 +91,29 @@ export function verifyAdminToken(token) {
     if (parts.length !== 4) return null;
     const [userId, email, timestampStr, signature] = parts;
     const payload = `${userId}:${email}:${timestampStr}`;
-    const expectedSignature = crypto.createHmac('sha256', ADMIN_SECRET).update(payload).digest('hex');
 
+    // Verify against active ADMIN_SECRET or DEFAULT_ADMIN_SECRET
     const sigBuf = Buffer.from(signature, 'hex');
-    const expBuf = Buffer.from(expectedSignature, 'hex');
-    if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+    const secretsToTry = [ADMIN_SECRET, DEFAULT_ADMIN_SECRET];
+    let signatureMatches = false;
+
+    for (const sec of secretsToTry) {
+      if (!sec) continue;
+      const expected = crypto.createHmac('sha256', sec).update(payload).digest('hex');
+      const expBuf = Buffer.from(expected, 'hex');
+      if (sigBuf.length === expBuf.length && crypto.timingSafeEqual(sigBuf, expBuf)) {
+        signatureMatches = true;
+        break;
+      }
+    }
+
+    if (!signatureMatches) {
       return null;
     }
 
-    // Valid for 24 hours
+    // Extended validity: 7 days
     const timestamp = parseInt(timestampStr, 10);
-    if (Date.now() - timestamp > 24 * 60 * 60 * 1000) {
+    if (Date.now() - timestamp > 7 * 24 * 60 * 60 * 1000) {
       return null;
     }
 

@@ -265,18 +265,38 @@ export const AdminPanel: React.FC = () => {
 
   const loadPartnerApplications = () => {
     setIsLoadingApplications(true);
-    const token = StorageService.getAdminToken();
-    fetch('/api/admin/partner-applications', {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    })
+    const headers = StorageService.getAdminAuthHeaders();
+    fetch('/api/admin/partner-applications', { headers })
       .then((r) => r.json())
       .then((data) => {
         setIsLoadingApplications(false);
-        if (data.success && Array.isArray(data.applications)) {
+        if (data.success && Array.isArray(data.applications) && data.applications.length > 0) {
           setPartnerApplications(data.applications);
+        } else {
+          // Synchronize from partners state or local storage
+          const localPartners = StorageService.getPartners();
+          if (localPartners.length > 0) {
+            setPartnerApplications(
+              localPartners.map((p) => ({
+                ...p,
+                applicationStatus: p.applicationStatus || p.status || 'pending',
+              }))
+            );
+          }
         }
       })
-      .catch(() => setIsLoadingApplications(false));
+      .catch(() => {
+        setIsLoadingApplications(false);
+        const localPartners = StorageService.getPartners();
+        if (localPartners.length > 0) {
+          setPartnerApplications(
+            localPartners.map((p) => ({
+              ...p,
+              applicationStatus: p.applicationStatus || p.status || 'pending',
+            }))
+          );
+        }
+      });
   };
 
   const [isLoadingCoinRequests, setIsLoadingCoinRequests] = useState(false);
@@ -285,11 +305,7 @@ export const AdminPanel: React.FC = () => {
 
   const loadCoinRequests = () => {
     setIsLoadingCoinRequests(true);
-    const token = StorageService.getAdminToken();
-    const headers: Record<string, string> = {
-      'x-admin-secret': 'MAGIZH_ADMIN_HMAC_SECRET_2026',
-    };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const headers = StorageService.getAdminAuthHeaders();
 
     fetch('/api/admin/coin-requests', { headers })
       .then((r) => r.json())
@@ -306,8 +322,7 @@ export const AdminPanel: React.FC = () => {
 
   const loadAdminBills = () => {
     setIsLoadingBills(true);
-    const token = StorageService.getAdminToken();
-    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    const headers = StorageService.getAdminAuthHeaders();
     Promise.all([
       fetch('/api/admin/pending-bills', { headers }).then((r) => r.json()),
       fetch('/api/admin/all-bills', { headers }).then((r) => r.json()),
@@ -596,20 +611,18 @@ export const AdminPanel: React.FC = () => {
 
     setDecidingAppId(appId);
     try {
-      const token = StorageService.getAdminToken();
+      const headers = StorageService.getAdminAuthHeaders();
       const res = await fetch(`/api/admin/partner-applications/${appId}/decision`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ decision, reason }),
+        headers,
+        body: JSON.stringify({ decision, reason, notes: reason }),
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        alert(data.error || 'Failed to process partner application decision');
+        showNotification(data.error || 'Failed to process partner application decision');
       } else {
         showNotification(data.message || `Partner application ${decision}d!`);
+        StorageService.updatePartnerStatus(appId, decision === 'approve' ? 'approved' : 'rejected');
         loadPartnerApplications();
         fetch('/api/partners')
           .then((r) => r.json())
@@ -621,7 +634,7 @@ export const AdminPanel: React.FC = () => {
           .catch(() => setPartners(StorageService.getPartners()));
       }
     } catch (err: any) {
-      alert(err.message || 'Network error.');
+      showNotification(err.message || 'Network error.');
     } finally {
       setDecidingAppId(null);
     }
@@ -637,13 +650,10 @@ export const AdminPanel: React.FC = () => {
 
     setDecidingBillId(billId);
     try {
-      const token = StorageService.getAdminToken();
+      const headers = StorageService.getAdminAuthHeaders();
       const res = await fetch(`/api/admin/bills/${billId}/decision`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
+        headers,
         body: JSON.stringify({ decision, notes }),
       });
       const data = await res.json();
@@ -665,13 +675,10 @@ export const AdminPanel: React.FC = () => {
   const handleTogglePartner = async (partner: PartnerShop) => {
     const nextStatus = partner.status === 'approved' ? 'suspended' : 'approved';
     try {
-      const token = StorageService.getAdminToken();
+      const headers = StorageService.getAdminAuthHeaders();
       const res = await fetch(`/api/partners/${partner.id}/toggle-status`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
+        headers,
         body: JSON.stringify({ status: nextStatus }),
       });
       const data = await res.json();
@@ -713,10 +720,7 @@ export const AdminPanel: React.FC = () => {
     try {
       const res = await fetch('/api/admin/partners/create', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}),
-        },
+        headers: StorageService.getAdminAuthHeaders(),
         body: JSON.stringify({
           ownerName: newPartnerOwner,
           shopName: newPartnerShop,
@@ -794,13 +798,9 @@ export const AdminPanel: React.FC = () => {
   const handleVerifyPayment = async (orderId: string) => {
     setVerifyingOrderId(orderId);
     try {
-      const token = StorageService.getAdminToken();
       const res = await fetch(`/api/admin/orders/${orderId}/verify-payment`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
+        headers: StorageService.getAdminAuthHeaders(),
         body: JSON.stringify({ notes: 'UPI payment verified by Administrator.' }),
       });
       const data = await res.json();
@@ -826,13 +826,9 @@ export const AdminPanel: React.FC = () => {
   const handleRejectPayment = async (orderId: string, reason: string) => {
     setVerifyingOrderId(orderId);
     try {
-      const token = StorageService.getAdminToken();
       const res = await fetch(`/api/admin/orders/${orderId}/reject-payment`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
+        headers: StorageService.getAdminAuthHeaders(),
         body: JSON.stringify({ reason }),
       });
       const data = await res.json();
@@ -1901,98 +1897,155 @@ export const AdminPanel: React.FC = () => {
             </div>
           </div>
 
-          {isLoadingApplications ? (
-            <div className="text-center py-10 text-xs text-gray-500 flex items-center justify-center gap-2">
-              <Loader2 className="w-4 h-4 animate-spin text-amber-700" />
-              <span>Loading applications...</span>
-            </div>
-          ) : partnerApplications.length === 0 ? (
-            <div className="text-center py-12">
-              <Building2 className="w-12 h-12 text-gray-300 mx-auto mb-2" />
-              <p className="text-xs text-gray-500 font-semibold">No partner applications submitted yet.</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {partnerApplications
-                .filter((app) => appFilter === 'all' || app.applicationStatus === appFilter)
-                .map((app) => (
-                  <div
-                    key={app.id}
-                    className="p-4 border border-cream-300 rounded-2xl bg-cream-50/50 text-xs space-y-3 flex flex-col justify-between"
-                  >
-                    <div className="space-y-2">
-                      <div className="flex items-start justify-between gap-2 border-b border-cream-200 pb-2">
-                        <div>
-                          <h3 className="font-extrabold text-darkbrown-900 text-sm">{app.shopName}</h3>
-                          <p className="text-[11px] text-gray-600 font-bold">
-                            Owner: <span className="text-darkbrown-900">{app.ownerName}</span>
-                          </p>
+          {(() => {
+            const rawList = partnerApplications.length > 0
+              ? partnerApplications
+              : partners.map((p) => ({
+                  ...p,
+                  applicationStatus: (p.applicationStatus || p.status || 'pending').toLowerCase(),
+                  status: (p.status || 'pending').toLowerCase(),
+                }));
+            const effectiveApps = rawList.map((app) => ({
+              ...app,
+              statusNormalized: (app.applicationStatus || app.status || 'pending').toLowerCase(),
+            }));
+            const filteredApps = effectiveApps.filter((app) => {
+              if (appFilter === 'all') return true;
+              return app.statusNormalized === appFilter.toLowerCase();
+            });
+
+            if (isLoadingApplications) {
+              return (
+                <div className="text-center py-10 text-xs text-gray-500 flex items-center justify-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin text-amber-700" />
+                  <span>Loading applications...</span>
+                </div>
+              );
+            }
+
+            if (filteredApps.length === 0) {
+              return (
+                <div className="text-center py-12">
+                  <Building2 className="w-12 h-12 text-gray-300 mx-auto mb-2" />
+                  <p className="text-xs text-gray-500 font-semibold">
+                    {appFilter === 'all'
+                      ? 'No partner applications submitted yet.'
+                      : `No partner applications found with status "${appFilter}".`}
+                  </p>
+                </div>
+              );
+            }
+
+            return (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {filteredApps.map((app) => {
+                  const isPending = app.statusNormalized === 'pending';
+                  const isApproved = app.statusNormalized === 'approved' || app.statusNormalized === 'active';
+                  const isRejected = app.statusNormalized === 'rejected';
+
+                  return (
+                    <div
+                      key={app.id}
+                      className="p-4 border border-cream-300 rounded-2xl bg-cream-50/50 text-xs space-y-3 flex flex-col justify-between"
+                    >
+                      <div className="space-y-2">
+                        <div className="flex items-start justify-between gap-2 border-b border-cream-200 pb-2">
+                          <div>
+                            <h3 className="font-extrabold text-darkbrown-900 text-sm">{app.shopName}</h3>
+                            <p className="text-[11px] text-gray-600 font-bold">
+                              Owner: <span className="text-darkbrown-900">{app.ownerName}</span>
+                            </p>
+                          </div>
+                          <span
+                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                              isApproved
+                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                : isRejected
+                                ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                                : 'bg-amber-100 text-amber-800 border border-amber-300'
+                            }`}
+                          >
+                            {app.statusNormalized.toUpperCase()}
+                          </span>
                         </div>
-                        <span
-                          className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                            app.applicationStatus === 'APPROVED'
-                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                              : app.applicationStatus === 'REJECTED'
-                              ? 'bg-rose-100 text-rose-800 border border-rose-300'
-                              : 'bg-amber-100 text-amber-800 border border-amber-300'
-                          }`}
-                        >
-                          {app.applicationStatus}
-                        </span>
+
+                        <div className="grid grid-cols-2 gap-2 text-[11px] text-gray-700">
+                          <div className="flex items-center gap-1.5">
+                            <Phone className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                            <span className="font-mono">{app.mobile}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5 truncate">
+                            <Mail className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                            <span className="truncate">{app.email}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5 col-span-2">
+                            <QrCode className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                            <span>Merchant UPI: <strong className="font-mono text-darkbrown-900">{app.merchantUpiId || 'Not set'}</strong></span>
+                          </div>
+                          <div className="flex items-center gap-1.5 col-span-2">
+                            <MapPin className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                            <span>{app.address || 'Address not set'}, {app.city || app.district || ''} - {app.pinCode || ''}</span>
+                          </div>
+                          {app.gstNumber && (
+                            <div className="col-span-2 text-[10px] text-gray-500 font-mono">
+                              GSTIN: {app.gstNumber}
+                            </div>
+                          )}
+                          {app.rejectionReason && (
+                            <div className="col-span-2 p-2 bg-rose-50 border border-rose-200 rounded-lg text-rose-800 text-[10px]">
+                              <strong>Rejection Note:</strong> {app.rejectionReason}
+                            </div>
+                          )}
+                        </div>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-2 text-[11px] text-gray-700">
-                        <div className="flex items-center gap-1.5">
-                          <Phone className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                          <span className="font-mono">{app.mobile}</span>
+                      {isPending && (
+                        <div className="flex gap-2 pt-2 border-t border-cream-200">
+                          <button
+                            onClick={() => handleDecidePartnerApplication(app.id, 'reject')}
+                            disabled={decidingAppId === app.id}
+                            className="flex-1 py-2 bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-300 rounded-xl font-bold text-xs transition-all disabled:opacity-50"
+                          >
+                            Reject Partner
+                          </button>
+                          <button
+                            onClick={() => handleDecidePartnerApplication(app.id, 'approve')}
+                            disabled={decidingAppId === app.id}
+                            className="flex-1 py-2 bg-emerald-800 hover:bg-emerald-900 text-white rounded-xl font-bold text-xs shadow-xs transition-all disabled:opacity-50"
+                          >
+                            Approve Partner
+                          </button>
                         </div>
-                        <div className="flex items-center gap-1.5 truncate">
-                          <Mail className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                          <span className="truncate">{app.email}</span>
+                      )}
+
+                      {isApproved && (
+                        <div className="flex justify-end pt-2 border-t border-cream-200">
+                          <button
+                            onClick={() => handleTogglePartner(app)}
+                            className="px-3 py-1.5 rounded-xl font-bold text-xs bg-amber-100 text-amber-900 hover:bg-amber-200 transition-all"
+                          >
+                            Suspend Shop
+                          </button>
                         </div>
-                        <div className="flex items-center gap-1.5 col-span-2">
-                          <QrCode className="w-3.5 h-3.5 text-amber-700 shrink-0" />
-                          <span>Merchant UPI: <strong className="font-mono text-darkbrown-900">{app.merchantUpiId || 'Not set'}</strong></span>
+                      )}
+
+                      {isRejected && (
+                        <div className="flex justify-end pt-2 border-t border-cream-200">
+                          <button
+                            onClick={() => handleDecidePartnerApplication(app.id, 'approve')}
+                            disabled={decidingAppId === app.id}
+                            className="px-3 py-1.5 rounded-xl font-bold text-xs bg-emerald-700 text-white hover:bg-emerald-800 transition-all"
+                          >
+                            Re-Approve Partner
+                          </button>
                         </div>
-                        <div className="flex items-center gap-1.5 col-span-2">
-                          <MapPin className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                          <span>{app.address}, {app.city}, {app.district} - {app.pinCode}</span>
-                        </div>
-                        {app.gstNumber && (
-                          <div className="col-span-2 text-[10px] text-gray-500 font-mono">
-                            GSTIN: {app.gstNumber}
-                          </div>
-                        )}
-                        {app.rejectionReason && (
-                          <div className="col-span-2 p-2 bg-rose-50 border border-rose-200 rounded-lg text-rose-800 text-[10px]">
-                            <strong>Rejection Note:</strong> {app.rejectionReason}
-                          </div>
-                        )}
-                      </div>
+                      )}
                     </div>
-
-                    {app.applicationStatus === 'PENDING' && (
-                      <div className="flex gap-2 pt-2 border-t border-cream-200">
-                        <button
-                          onClick={() => handleDecidePartnerApplication(app.id, 'reject')}
-                          disabled={decidingAppId === app.id}
-                          className="flex-1 py-2 bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-300 rounded-xl font-bold text-xs transition-all disabled:opacity-50"
-                        >
-                          Reject Partner
-                        </button>
-                        <button
-                          onClick={() => handleDecidePartnerApplication(app.id, 'approve')}
-                          disabled={decidingAppId === app.id}
-                          className="flex-1 py-2 bg-emerald-800 hover:bg-emerald-900 text-white rounded-xl font-bold text-xs shadow-xs transition-all disabled:opacity-50"
-                        >
-                          Approve Partner
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                ))}
-            </div>
-          )}
+                  );
+                })}
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -3986,10 +4039,12 @@ export const AdminPanel: React.FC = () => {
                     </p>
                   </div>
                   <span
-                    className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                    className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
                       ptr.status === 'approved'
-                        ? 'bg-emerald-100 text-emerald-800'
-                        : 'bg-red-100 text-red-800'
+                        ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                        : ptr.status === 'pending'
+                        ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                        : 'bg-rose-100 text-rose-800 border border-rose-300'
                     }`}
                   >
                     {ptr.status}

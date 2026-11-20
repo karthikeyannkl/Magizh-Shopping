@@ -830,6 +830,19 @@ export const StorageService = {
   },
 
   addToCart(item: CartItem): void {
+    const product = this.getProducts().find((p) => p.id === item.productId);
+    if (product) {
+      if (product.status === 'coming_soon') {
+        console.warn(`[StorageService] Product ${product.name} is Coming Soon; blocked from cart.`);
+        return;
+      }
+      const variant = product.variants?.find((v) => v.weight === item.variantWeight);
+      if (variant?.isComingSoon) {
+        console.warn(`[StorageService] Variant ${item.variantWeight} is Coming Soon; blocked from cart.`);
+        return;
+      }
+    }
+
     const cart = this.getCart();
     const existingIndex = cart.findIndex(
       (c) => c.productId === item.productId && c.variantWeight === item.variantWeight

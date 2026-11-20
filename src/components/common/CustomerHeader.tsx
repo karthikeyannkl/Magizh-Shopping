@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShoppingBag, Coins, User as UserIcon, Store, LogOut, ChevronDown, Sparkles } from 'lucide-react';
+import { ShoppingBag, Coins, User as UserIcon, Store, LogOut, ChevronDown, Sparkles, MapPin, FileText } from 'lucide-react';
 import { StorageService, subscribe } from '../../services/storage';
 import { User } from '../../types';
 
@@ -52,7 +52,7 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({
   };
 
   return (
-    <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-cream-300 shadow-xs w-full max-w-full overflow-hidden">
+    <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-cream-300 shadow-xs w-full max-w-full">
       {/* Top Brand Announcement Bar */}
       <div className="bg-gradient-to-r from-magizh-900 via-magizh-800 to-darkbrown-900 text-white text-xs px-2.5 sm:px-3 py-1 sm:py-1.5 flex items-center justify-between overflow-hidden">
         <div className="flex items-center space-x-1.5 sm:space-x-2 min-w-0 flex-1 mr-2">
@@ -112,16 +112,6 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({
             <span>Partner Shops</span>
           </button>
 
-          {/* Partner Portal Direct Access */}
-          <button
-            onClick={() => onNavigate('partner')}
-            className="hidden md:inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-bold transition-colors bg-blue-950 text-white hover:bg-blue-900 border border-blue-700 shadow-2xs"
-            title="Open Partner Shop POS & Franchise Portal"
-          >
-            <Store className="w-3.5 h-3.5 text-amber-300" />
-            <span>Partner App</span>
-          </button>
-
           {/* B5 Coin Wallet Badge */}
           {isLoggedIn ? (
             <button
@@ -167,71 +157,126 @@ export const CustomerHeader: React.FC<CustomerHeaderProps> = ({
           {isLoggedIn ? (
             <div className="relative shrink-0">
               <button
-                onClick={() => setShowProfileMenu(!showProfileMenu)}
-                className={`flex items-center gap-1 sm:gap-1.5 p-1.5 sm:px-3 sm:py-1.5 rounded-full text-xs font-bold transition-all border ${
+                type="button"
+                onClick={() => setShowProfileMenu((prev) => !prev)}
+                className={`flex items-center gap-1 sm:gap-1.5 p-1.5 sm:px-3 sm:py-1.5 rounded-full text-xs font-bold transition-all border cursor-pointer ${
                   currentTab === 'account'
                     ? 'bg-magizh-800 text-white border-magizh-900 shadow-sm'
                     : 'bg-white hover:bg-cream-100 text-darkbrown-900 border-cream-300'
                 }`}
-                title="Customer Profile & Account"
+                title={`Logged in as ${currentUser.name} - Click for Account Menu`}
               >
-                <div className="w-5 h-5 sm:w-4 sm:h-4 rounded-full bg-magizh-100 text-magizh-800 flex items-center justify-center text-[10px] font-extrabold shrink-0">
+                <div className="w-5 h-5 sm:w-5 sm:h-5 rounded-full bg-magizh-100 text-magizh-800 flex items-center justify-center text-[10px] font-extrabold shrink-0 border border-magizh-200">
                   {currentUser.name ? currentUser.name.charAt(0).toUpperCase() : 'C'}
                 </div>
-                <span className="hidden sm:inline">{currentUser.name.split(' ')[0]}</span>
-                <ChevronDown className="hidden sm:inline w-3 h-3 opacity-60" />
+                <span className="inline-block max-w-[80px] sm:max-w-[120px] truncate text-left text-xs font-bold">
+                  {currentUser.name || 'Account'}
+                </span>
+                <ChevronDown className={`w-3 h-3 opacity-60 transition-transform ${showProfileMenu ? 'rotate-180' : ''}`} />
               </button>
+
+              {/* Backdrop Overlay for outside click closing */}
+              {showProfileMenu && (
+                <div
+                  className="fixed inset-0 z-40 bg-black/5"
+                  onClick={() => setShowProfileMenu(false)}
+                />
+              )}
 
               {/* Customer Account Dropdown Menu */}
               {showProfileMenu && (
-                <div className="absolute right-0 mt-2 w-56 bg-white rounded-2xl shadow-xl border border-cream-300 py-2 z-50 animate-in fade-in zoom-in-95 duration-100">
-                  <div className="px-3.5 py-2 border-b border-cream-200">
-                    <p className="text-xs font-extrabold text-darkbrown-900 truncate">{currentUser.name}</p>
-                    <p className="text-[11px] text-gray-500 font-mono">{currentUser.customerCode || currentUser.mobile}</p>
+                <div className="absolute right-0 mt-2 w-64 bg-white rounded-2xl shadow-2xl border border-cream-300 py-2 z-50 animate-in fade-in zoom-in-95 duration-100">
+                  <div className="px-4 py-2.5 border-b border-cream-200 bg-cream-50/70 rounded-t-2xl">
+                    <p className="text-xs font-black text-darkbrown-900 truncate">{currentUser.name}</p>
+                    <p className="text-[11px] text-gray-600 font-mono mt-0.5">{currentUser.mobile}</p>
+                    {currentUser.customerCode && (
+                      <span className="inline-block mt-1 text-[9px] font-mono font-bold bg-magizh-100 text-magizh-800 px-1.5 py-0.5 rounded">
+                        ID: {currentUser.customerCode}
+                      </span>
+                    )}
                   </div>
 
                   <div className="py-1">
+                    {/* 1. My Profile */}
                     <button
+                      type="button"
                       onClick={() => {
                         setShowProfileMenu(false);
                         onNavigate('account');
                       }}
-                      className="w-full text-left px-3.5 py-2 text-xs flex items-center gap-2 hover:bg-cream-100 text-darkbrown-900 font-medium"
+                      className="w-full text-left px-4 py-2 text-xs flex items-center gap-2.5 hover:bg-cream-100 text-darkbrown-900 font-semibold transition-colors"
                     >
-                      <UserIcon className="w-4 h-4 text-magizh-700" />
-                      <span>My Profile &amp; Addresses</span>
+                      <UserIcon className="w-4 h-4 text-magizh-700 shrink-0" />
+                      <span>My Profile</span>
                     </button>
 
+                    {/* 2. My Orders */}
                     <button
+                      type="button"
                       onClick={() => {
                         setShowProfileMenu(false);
                         onNavigate('orders');
                       }}
-                      className="w-full text-left px-3.5 py-2 text-xs flex items-center gap-2 hover:bg-cream-100 text-darkbrown-900 font-medium"
+                      className="w-full text-left px-4 py-2 text-xs flex items-center gap-2.5 hover:bg-cream-100 text-darkbrown-900 font-semibold transition-colors"
                     >
-                      <ShoppingBag className="w-4 h-4 text-magizh-700" />
-                      <span>My Order History</span>
+                      <ShoppingBag className="w-4 h-4 text-magizh-700 shrink-0" />
+                      <span>My Orders</span>
                     </button>
 
+                    {/* 3. My Address */}
                     <button
+                      type="button"
+                      onClick={() => {
+                        setShowProfileMenu(false);
+                        onNavigate('account');
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs flex items-center gap-2.5 hover:bg-cream-100 text-darkbrown-900 font-semibold transition-colors"
+                    >
+                      <MapPin className="w-4 h-4 text-amber-700 shrink-0" />
+                      <span>My Address</span>
+                    </button>
+
+                    {/* 4. B5 Coin Wallet */}
+                    <button
+                      type="button"
                       onClick={() => {
                         setShowProfileMenu(false);
                         onNavigate('wallet');
                       }}
-                      className="w-full text-left px-3.5 py-2 text-xs flex items-center gap-2 hover:bg-cream-100 text-darkbrown-900 font-medium"
+                      className="w-full text-left px-4 py-2 text-xs flex items-center gap-2.5 hover:bg-cream-100 text-darkbrown-900 font-semibold transition-colors"
                     >
-                      <Coins className="w-4 h-4 text-b5-600" />
-                      <span>B5 Coin Wallet</span>
+                      <Coins className="w-4 h-4 text-b5-600 shrink-0" />
+                      <div className="flex items-center justify-between flex-1">
+                        <span>B5 Coin Wallet</span>
+                        <span className="text-[10px] font-black text-b5-700 bg-b5-50 px-1.5 py-0.5 rounded">
+                          {coinAccount.availableBalance}
+                        </span>
+                      </div>
+                    </button>
+
+                    {/* 5. Account Details */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowProfileMenu(false);
+                        onNavigate('account');
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs flex items-center gap-2.5 hover:bg-cream-100 text-darkbrown-900 font-semibold transition-colors"
+                    >
+                      <FileText className="w-4 h-4 text-blue-700 shrink-0" />
+                      <span>Account Details</span>
                     </button>
                   </div>
 
-                  <div className="border-t border-cream-200 pt-1">
+                  <div className="border-t border-cream-200 pt-1 mt-1">
+                    {/* 6. Logout */}
                     <button
+                      type="button"
                       onClick={handleLogout}
-                      className="w-full text-left px-3.5 py-2 text-xs flex items-center gap-2 hover:bg-red-50 text-red-700 font-bold"
+                      className="w-full text-left px-4 py-2 text-xs flex items-center gap-2.5 hover:bg-red-50 text-red-700 font-bold transition-colors"
                     >
-                      <LogOut className="w-4 h-4 text-red-600" />
-                      <span>Log Out</span>
+                      <LogOut className="w-4 h-4 text-red-600 shrink-0" />
+                      <span>Logout</span>
                     </button>
                   </div>
                 </div>

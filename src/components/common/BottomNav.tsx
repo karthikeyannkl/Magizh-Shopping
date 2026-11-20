@@ -17,9 +17,10 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   cartCount,
   coinBalance,
 }) => {
-  // Mobile navigation tabs adapted to role
+  // Mobile navigation tabs adapted to role (Strict customer isolation on customer views)
   const getTabs = () => {
-    if (role === 'partner') {
+    const isCustomerView = ['home', 'categories', 'cart', 'checkout', 'orders', 'wallet', 'account', 'partner-shops'].includes(currentTab);
+    if (!isCustomerView && role === 'partner') {
       return [
         { id: 'partner', label: 'Store', icon: Store },
         { id: 'partner-orders', label: 'Orders', icon: PackageCheck },
@@ -29,17 +30,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
       ];
     }
 
-    if (role === 'sales') {
-      return [
-        { id: 'sales', label: 'Overview', icon: BarChart2 },
-        { id: 'referral', label: 'Levels 1-7', icon: Share2 },
-        { id: 'home', label: 'Customer App', icon: Home },
-        { id: 'wallet', label: 'B5 Coins', icon: Coins, badge: coinBalance },
-        { id: 'account', label: 'Profile', icon: UserIcon },
-      ];
-    }
-
-    if (role === 'admin') {
+    if (!isCustomerView && role === 'admin') {
       return [
         { id: 'admin', label: 'Dashboard', icon: Shield },
         { id: 'admin-orders', label: 'Orders', icon: PackageCheck },
@@ -49,7 +40,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
       ];
     }
 
-    // Default Customer Navigation
+    // Default Customer Navigation (Strictly customer facing: Home, Categories, Cart, B5 Wallet, Account)
     return [
       { id: 'home', label: 'Home', icon: Home },
       { id: 'categories', label: 'Categories', icon: Grid },

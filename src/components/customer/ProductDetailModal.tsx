@@ -138,51 +138,64 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                 )}
               </div>
 
-              {/* Price & Savings */}
-              <div className="bg-cream-50 p-3.5 rounded-2xl border border-cream-200 flex items-baseline justify-between">
-                <div>
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-2xl font-black text-magizh-900">
-                      ₹{selectedVariant.price * quantity}
-                    </span>
-                    {selectedVariant.originalPrice > selectedVariant.price && (
-                      <span className="text-sm text-gray-400 line-through">
-                        ₹{selectedVariant.originalPrice * quantity}
-                      </span>
-                    )}
+              {/* Price & Savings OR Coming Soon Banner (Strictly hide price when coming soon) */}
+              {product.status === 'coming_soon' || selectedVariant?.isComingSoon ? (
+                <div className="bg-amber-50 p-4 rounded-2xl border border-amber-200 flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <Clock className="w-5 h-5 text-amber-700 shrink-0" />
+                    <div>
+                      <p className="text-sm font-black text-amber-950 uppercase tracking-wide">Coming Soon</p>
+                      <p className="text-xs text-amber-800">This native variety is preview only and will be available for purchase shortly.</p>
+                    </div>
                   </div>
-                  <span className="text-xs text-emerald-700 font-bold">
-                    You save ₹{(selectedVariant.originalPrice - selectedVariant.price) * quantity} ({discountPercent}%)
+                  <span className="text-xs font-black px-2.5 py-1 rounded-lg bg-amber-500 text-white uppercase tracking-wider shrink-0">
+                    Preview
                   </span>
                 </div>
-
-                <span className={`text-xs font-bold px-2.5 py-1 rounded-lg ${
-                  product.status === 'coming_soon' || selectedVariant?.isComingSoon
-                    ? 'bg-amber-500 text-white font-extrabold uppercase tracking-wider'
-                    : selectedVariant.stock > 10 ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
-                }`}>
-                  {product.status === 'coming_soon' || selectedVariant?.isComingSoon
-                    ? 'Coming Soon'
-                    : selectedVariant.stock > 10 ? 'In Stock' : `Only ${selectedVariant.stock} left`}
-                </span>
-              </div>
-
-              {/* B5 Coin Reward Banner */}
-              <div className="bg-gradient-to-r from-b5-50 to-amber-50 border border-b5-200 p-3 rounded-2xl flex items-center justify-between text-xs">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-full bg-b5-600 text-white flex items-center justify-center font-black shadow-inner">
-                    <Coins className="w-4 h-4" />
-                  </div>
+              ) : (
+                <div className="bg-cream-50 p-3.5 rounded-2xl border border-cream-200 flex items-baseline justify-between">
                   <div>
-                    <span className="font-extrabold text-b5-900 block">
-                      +{coinsEarned} B5 Coins earned! &bull; Up to {product.b5CoinRedemptionPercentage !== undefined ? product.b5CoinRedemptionPercentage : 20}% Coin Redemption
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-2xl font-black text-magizh-900">
+                        ₹{selectedVariant.price * quantity}
+                      </span>
+                      {selectedVariant.originalPrice > selectedVariant.price && (
+                        <span className="text-sm text-gray-400 line-through">
+                          ₹{selectedVariant.originalPrice * quantity}
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-xs text-emerald-700 font-bold">
+                      You save ₹{(selectedVariant.originalPrice - selectedVariant.price) * quantity} ({discountPercent}%)
                     </span>
-                    <span className="text-[11px] text-darkbrown-700">
-                      1 B5 Coin = ₹1 discount value at checkout
-                    </span>
+                  </div>
+
+                  <span className={`text-xs font-bold px-2.5 py-1 rounded-lg ${
+                    selectedVariant.stock > 10 ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                  }`}>
+                    {selectedVariant.stock > 10 ? 'In Stock' : `Only ${selectedVariant.stock} left`}
+                  </span>
+                </div>
+              )}
+
+              {/* B5 Coin Reward Banner (Only for available purchasable items) */}
+              {!(product.status === 'coming_soon' || selectedVariant?.isComingSoon) && (
+                <div className="bg-gradient-to-r from-b5-50 to-amber-50 border border-b5-200 p-3 rounded-2xl flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-full bg-b5-600 text-white flex items-center justify-center font-black shadow-inner">
+                      <Coins className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <span className="font-extrabold text-b5-900 block">
+                        +{coinsEarned} B5 Coins earned! &bull; Up to {product.b5CoinRedemptionPercentage !== undefined ? product.b5CoinRedemptionPercentage : 20}% Coin Redemption
+                      </span>
+                      <span className="text-[11px] text-darkbrown-700">
+                        1 B5 Coin = ₹1 discount value at checkout
+                      </span>
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
 
               {/* Weight Selector */}
               <div>
@@ -202,40 +215,46 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                       }`}
                     >
                       <div>{v.weight}</div>
-                      <div className="text-[11px] text-magizh-800 font-bold mt-0.5">₹{v.price}</div>
+                      {!(product.status === 'coming_soon' || v.isComingSoon) ? (
+                        <div className="text-[11px] text-magizh-800 font-bold mt-0.5">₹{v.price}</div>
+                      ) : (
+                        <div className="text-[10px] text-amber-700 font-black uppercase mt-0.5">Coming Soon</div>
+                      )}
                     </button>
                   ))}
                 </div>
               </div>
 
-              {/* Quantity Selector */}
-              <div>
-                <label className="block text-xs font-bold text-darkbrown-800 mb-1.5">
-                  Quantity:
-                </label>
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center border border-cream-300 rounded-xl bg-white overflow-hidden shadow-2xs">
-                    <button
-                      onClick={() => setQuantity(Math.max(1, quantity - 1))}
-                      className="p-2 hover:bg-cream-100 text-darkbrown-800"
-                    >
-                      <Minus className="w-4 h-4" />
-                    </button>
-                    <span className="px-4 text-xs font-bold text-darkbrown-900 font-mono">
-                      {quantity}
+              {/* Quantity Selector (Only for available items) */}
+              {!(product.status === 'coming_soon' || selectedVariant?.isComingSoon) && (
+                <div>
+                  <label className="block text-xs font-bold text-darkbrown-800 mb-1.5">
+                    Quantity:
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center border border-cream-300 rounded-xl bg-white overflow-hidden shadow-2xs">
+                      <button
+                        onClick={() => setQuantity(Math.max(1, quantity - 1))}
+                        className="p-2 hover:bg-cream-100 text-darkbrown-800"
+                      >
+                        <Minus className="w-4 h-4" />
+                      </button>
+                      <span className="px-4 text-xs font-bold text-darkbrown-900 font-mono">
+                        {quantity}
+                      </span>
+                      <button
+                        onClick={() => setQuantity(Math.min(selectedVariant.stock, quantity + 1))}
+                        className="p-2 hover:bg-cream-100 text-darkbrown-800"
+                      >
+                        <Plus className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <span className="text-xs text-gray-500 font-medium">
+                      (₹{selectedVariant.price} each)
                     </span>
-                    <button
-                      onClick={() => setQuantity(Math.min(selectedVariant.stock, quantity + 1))}
-                      className="p-2 hover:bg-cream-100 text-darkbrown-800"
-                    >
-                      <Plus className="w-4 h-4" />
-                    </button>
                   </div>
-                  <span className="text-xs text-gray-500 font-medium">
-                    (₹{selectedVariant.price} each)
-                  </span>
                 </div>
-              </div>
+              )}
 
               {/* Action Buttons */}
               <div className="flex gap-2 pt-2">

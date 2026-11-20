@@ -76,7 +76,6 @@ import {
   ManualCoinRequest,
   B5Transaction,
   Coupon,
-  ReferralLevelConfig,
   AuditLog,
   PartnerLocalTransaction,
 } from '../../types';
@@ -135,7 +134,6 @@ export const AdminPanel: React.FC = () => {
     StorageService.getManualCoinRequests()
   );
   const [coupons, setCoupons] = useState<Coupon[]>(StorageService.getCoupons());
-  const [levels, setLevels] = useState<ReferralLevelConfig[]>(StorageService.getReferralLevels());
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>(StorageService.getAuditLogs());
   const [ledger, setLedger] = useState<B5Transaction[]>(StorageService.getCoinTransactions());
 
@@ -222,6 +220,21 @@ export const AdminPanel: React.FC = () => {
   const [testRestoreReport, setTestRestoreReport] = useState<any | null>(null);
   const [backupActionNotice, setBackupActionNotice] = useState<string | null>(null);
   const [b5CloudStatus, setB5CloudStatus] = useState<any | null>(null);
+
+  // Customer Directory State (Part 4)
+  const [adminCustomers, setAdminCustomers] = useState<any[]>([]);
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [isLoadingCustomers, setIsLoadingCustomers] = useState(false);
+  const [selectedCustomerForHistory, setSelectedCustomerForHistory] = useState<any | null>(null);
+  const [selectedCustomerOrders, setSelectedCustomerOrders] = useState<any[]>([]);
+  const [isLoadingCustomerOrders, setIsLoadingCustomerOrders] = useState(false);
+
+  // Payments & UTR Ledger State (Part 5)
+  const [adminPayments, setAdminPayments] = useState<any[]>([]);
+  const [paymentSearch, setPaymentSearch] = useState('');
+  const [paymentStatusFilter, setPaymentStatusFilter] = useState<'all' | 'pending' | 'verified' | 'rejected'>('all');
+  const [isLoadingPayments, setIsLoadingPayments] = useState(false);
+  const [selectedOrderForPaymentDetails, setSelectedOrderForPaymentDetails] = useState<any | null>(null);
 
   useEffect(() => {
     const unsubOrders = subscribe('ordersChanged', (o) => setOrders(o));
@@ -412,13 +425,90 @@ export const AdminPanel: React.FC = () => {
     }
   };
 
+  const loadAdminCustomers = async () => {
+    setIsLoadingCustomers(true);
+    try {
+      const token = StorageService.getAdminToken();
+      const res = await fetch('/api/admin/customers', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const data = await res.json();
+      if (data.success && Array.isArray(data.customers)) {
+        setAdminCustomers(data.customers);
+      } else {
+        const local = StorageService.getUsers().filter((u) => u.role === 'customer');
+        setAdminCustomers(local);
+      }
+    } catch {
+      const local = StorageService.getUsers().filter((u) => u.role === 'customer');
+      setAdminCustomers(local);
+    } finally {
+      setIsLoadingCustomers(false);
+    }
+  };
+
+  const loadCustomerOrders = async (customer: any) => {
+    setSelectedCustomerForHistory(customer);
+    setIsLoadingCustomerOrders(true);
+    try {
+      const token = StorageService.getAdminToken();
+      const res = await fetch(`/api/admin/customers/${customer.id}/orders`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const data = await res.json();
+      if (data.success && Array.isArray(data.orders)) {
+        setSelectedCustomerOrders(data.orders);
+      } else {
+        const local = orders.filter(
+          (o) => o.customerId === customer.id || o.customerPhone === customer.mobile
+        );
+        setSelectedCustomerOrders(local);
+      }
+    } catch {
+      const local = orders.filter(
+        (o) => o.customerId === customer.id || o.customerPhone === customer.mobile
+      );
+      setSelectedCustomerOrders(local);
+    } finally {
+      setIsLoadingCustomerOrders(false);
+    }
+  };
+
+  const loadAdminPayments = async () => {
+    setIsLoadingPayments(true);
+    try {
+      const token = StorageService.getAdminToken();
+      const res = await fetch('/api/admin/payments', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const data = await res.json();
+      if (data.success && Array.isArray(data.payments)) {
+        setAdminPayments(data.payments);
+      }
+    } catch (_) {
+    } finally {
+      setIsLoadingPayments(false);
+    }
+  };
+
   useEffect(() => {
     loadPartnerApplications();
     loadAdminBills();
     loadAdminImages();
     loadBackupData();
     loadCoinRequests();
+    loadAdminCustomers();
+    loadAdminPayments();
   }, []);
+
+  useEffect(() => {
+    if (activeSidebarTab === 'customers') {
+      loadAdminCustomers();
+    }
+    if (activeSidebarTab === 'payments') {
+      loadAdminPayments();
+    }
+  }, [activeSidebarTab]);
 
   const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -521,7 +611,14 @@ export const AdminPanel: React.FC = () => {
       } else {
         showNotification(data.message || `Partner application ${decision}d!`);
         loadPartnerApplications();
-        setPartners(StorageService.getPartners());
+        fetch('/api/partners')
+          .then((r) => r.json())
+          .then((pd) => {
+            if (pd.partners) {
+              setPartners(pd.partners);
+            }
+          })
+          .catch(() => setPartners(StorageService.getPartners()));
       }
     } catch (err: any) {
       alert(err.message || 'Network error.');
@@ -564,17 +661,46 @@ export const AdminPanel: React.FC = () => {
     }
   };
 
-  // 1. Partner Approval / Suspension
-  const handleTogglePartner = (partner: PartnerShop) => {
+  // 1. Partner Approval / Suspension (Authoritative SQLite DB + Local Sync)
+  const handleTogglePartner = async (partner: PartnerShop) => {
     const nextStatus = partner.status === 'approved' ? 'suspended' : 'approved';
-    StorageService.updatePartnerStatus(partner.id, nextStatus);
-    StorageService.logAction(
-      'admin',
-      'Administrator',
-      nextStatus === 'approved' ? 'APPROVE_PARTNER' : 'SUSPEND_PARTNER',
-      `Partner ${partner.shopName} (${partner.partnerCode}) marked as ${nextStatus}`
-    );
-    showNotification(`Partner ${partner.shopName} is now ${nextStatus}!`);
+    try {
+      const token = StorageService.getAdminToken();
+      const res = await fetch(`/api/partners/${partner.id}/toggle-status`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ status: nextStatus }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        showNotification(data.error || 'Failed to update partner status in database');
+        return;
+      }
+      StorageService.updatePartnerStatus(partner.id, nextStatus);
+      // Reload partners from authoritative backend
+      const ptrRes = await fetch('/api/partners');
+      if (ptrRes.ok) {
+        const ptrData = await ptrRes.json();
+        if (ptrData.partners) {
+          setPartners(ptrData.partners);
+        }
+      }
+      loadPartnerApplications();
+      StorageService.logAction(
+        'admin',
+        'Administrator',
+        nextStatus === 'approved' ? 'APPROVE_PARTNER' : 'SUSPEND_PARTNER',
+        `Partner ${partner.shopName} (${partner.partnerCode}) permanently marked as ${nextStatus} in SQLite DB`
+      );
+      showNotification(`Partner ${partner.shopName} is now ${nextStatus}!`);
+    } catch (err: any) {
+      StorageService.updatePartnerStatus(partner.id, nextStatus);
+      setPartners(StorageService.getPartners());
+      showNotification(`Partner ${partner.shopName} updated locally: ${err.message}`);
+    }
   };
 
   // 1b. Admin Direct Partner Creation (Phase 2)
@@ -668,13 +794,57 @@ export const AdminPanel: React.FC = () => {
   const handleVerifyPayment = async (orderId: string) => {
     setVerifyingOrderId(orderId);
     try {
-      const updated = StorageService.verifyOrderPayment(orderId);
-      if (updated) {
+      const token = StorageService.getAdminToken();
+      const res = await fetch(`/api/admin/orders/${orderId}/verify-payment`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ notes: 'UPI payment verified by Administrator.' }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        StorageService.verifyOrderPayment(orderId);
         setOrders(StorageService.getOrders());
-        showNotification(`Order #${updated.orderNumber} payment verified & confirmed successfully!`);
+        showNotification(`Order payment verified & confirmed successfully!`);
+      } else {
+        // Fallback to local sync
+        const updated = StorageService.verifyOrderPayment(orderId);
+        if (updated) {
+          setOrders(StorageService.getOrders());
+          showNotification(`Order #${updated.orderNumber} payment confirmed.`);
+        }
       }
     } catch (err: any) {
       showNotification(`Failed to verify payment: ${err.message}`);
+    } finally {
+      setVerifyingOrderId(null);
+    }
+  };
+
+  const handleRejectPayment = async (orderId: string, reason: string) => {
+    setVerifyingOrderId(orderId);
+    try {
+      const token = StorageService.getAdminToken();
+      const res = await fetch(`/api/admin/orders/${orderId}/reject-payment`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ reason }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        handleUpdateOrderStatus(orderId, 'Cancelled');
+        showNotification(`Payment rejected: ${reason}`);
+      } else {
+        handleUpdateOrderStatus(orderId, 'Cancelled');
+        showNotification('Order cancelled & payment rejected.');
+      }
+    } catch (err: any) {
+      showNotification(`Error: ${err.message}`);
     } finally {
       setVerifyingOrderId(null);
     }
@@ -1315,7 +1485,6 @@ export const AdminPanel: React.FC = () => {
       case 'coins': return 'B5 Coin Rules, Approvals & Global Ledger';
       case 'payments': return 'UPI Payment Verification & Store Config';
       case 'partners': return 'Partner Franchise Applications & Stores';
-      case 'partnerPayments': return 'In-Store POS Bills & Counter Approvals';
       case 'inventory': return 'Inventory Tracking & Low Stock Alerts';
       case 'reports': return 'Business Reports & Audit Trail';
       case 'settings': return 'Store Configuration & Settings';
@@ -1335,7 +1504,6 @@ export const AdminPanel: React.FC = () => {
       case 'coins': return 'Review manual customer coin claims, issue coin credits, and inspect immutable audit ledger';
       case 'payments': return 'Verify 12-digit UPI UTR reference numbers and manage store merchant QR parameters';
       case 'partners': return 'Review incoming franchise shop registrations and manage approved store locations';
-      case 'partnerPayments': return 'Review customer bill discount requests and counter POS cash/UPI payments';
       case 'inventory': return 'Monitor inventory replenishment thresholds and out-of-stock items';
       case 'reports': return 'Detailed platform event logs and double-entry transaction journals';
       case 'settings': return 'General store rules, promo coupons, and operating parameters';
@@ -1577,18 +1745,18 @@ export const AdminPanel: React.FC = () => {
                 </div>
 
                 <div
-                  onClick={() => handleSelectSidebarTab('partnerPayments')}
+                  onClick={() => handleSelectSidebarTab('partners')}
                   className="bg-white p-4 rounded-2xl border border-cream-200 shadow-2xs hover:border-amber-400 cursor-pointer transition-all space-y-2 group"
                 >
                   <div className="flex items-center justify-between text-gray-500">
-                    <span className="text-xs font-bold">In-Store POS Bills</span>
+                    <span className="text-xs font-bold">Franchise Partners</span>
                     <div className="p-2 rounded-xl bg-indigo-50 text-indigo-700 group-hover:scale-110 transition-transform">
                       <Building2 className="w-4 h-4" />
                     </div>
                   </div>
-                  <p className="text-2xl font-black text-indigo-800">{pendingBills.length}</p>
+                  <p className="text-2xl font-black text-indigo-800">{partners.length}</p>
                   <span className="text-[11px] font-bold text-indigo-700 flex items-center gap-1">
-                    Counter bills pending <ArrowRight className="w-3 h-3" />
+                    {partnerApplications.filter((a) => a.applicationStatus === 'PENDING').length} Pending Review <ArrowRight className="w-3 h-3" />
                   </span>
                 </div>
               </div>
@@ -1828,154 +1996,562 @@ export const AdminPanel: React.FC = () => {
         </div>
       )}
 
-      {/* IN-STORE POS BILLS APPROVAL MANAGEMENT */}
-      {activeSidebarTab === 'partnerPayments' && (
+      {/* 4. ADMIN CUSTOMER MANAGEMENT (Part 4) */}
+      {activeSidebarTab === 'customers' && (
         <div className="bg-white rounded-3xl border border-cream-300 p-5 shadow-2xs space-y-4 animate-in fade-in">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-cream-200 pb-3">
             <div>
               <h2 className="text-sm font-extrabold text-darkbrown-900 flex items-center gap-2">
-                <Receipt className="w-4 h-4 text-emerald-800" />
-                <span>Partner In-Store Bills Approval &amp; Coin Deductions</span>
+                <Users className="w-4 h-4 text-magizh-800" />
+                <span>Customer Directory &amp; Accounts Management</span>
               </h2>
               <p className="text-xs text-gray-500">
-                Verify in-store transactions confirmed by partners. On approval, B5 Coins are deducted atomically and receipts issued.
+                Authoritative customer accounts, mobile numbers, registered addresses, and full order history
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-mono font-bold text-gray-500">
+                {adminCustomers.length} registered customers
+              </span>
+              <button
+                type="button"
+                onClick={loadAdminCustomers}
+                className="px-3 py-1.5 bg-cream-100 hover:bg-cream-200 text-darkbrown-800 rounded-xl text-xs font-bold transition-all flex items-center gap-1"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Refresh</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Customer Summary Statistics Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="bg-cream-50/70 p-3 rounded-2xl border border-cream-200">
+              <p className="text-[10px] text-gray-500 font-bold uppercase">Total Customers</p>
+              <p className="text-lg font-black text-darkbrown-900 mt-0.5">{adminCustomers.length}</p>
+            </div>
+            <div className="bg-emerald-50/70 p-3 rounded-2xl border border-emerald-200">
+              <p className="text-[10px] text-emerald-800 font-bold uppercase">Active Accounts</p>
+              <p className="text-lg font-black text-emerald-950 mt-0.5">
+                {adminCustomers.filter((c) => c.status !== 'suspended').length}
+              </p>
+            </div>
+            <div className="bg-blue-50/70 p-3 rounded-2xl border border-blue-200">
+              <p className="text-[10px] text-blue-800 font-bold uppercase">Total Platform Orders</p>
+              <p className="text-lg font-black text-blue-950 mt-0.5">{orders.length}</p>
+            </div>
+            <div className="bg-amber-50/70 p-3 rounded-2xl border border-amber-200">
+              <p className="text-[10px] text-amber-800 font-bold uppercase">Customer Addresses</p>
+              <p className="text-lg font-black text-amber-950 mt-0.5">
+                {adminCustomers.reduce((acc, c) => acc + (Array.isArray(c.addresses) ? c.addresses.length : 0), 0)}
+              </p>
+            </div>
+          </div>
+
+          {/* Search Box */}
+          <div className="relative">
+            <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={customerSearch}
+              onChange={(e) => setCustomerSearch(e.target.value)}
+              placeholder="Search customers by Mobile Number, User ID, or Name..."
+              className="w-full pl-9 pr-4 py-2.5 bg-cream-50/50 border border-cream-300 rounded-xl text-xs font-medium focus:outline-none focus:ring-1 focus:ring-magizh-700"
+            />
+          </div>
+
+          {/* Customers Table */}
+          {isLoadingCustomers ? (
+            <div className="py-12 text-center text-xs text-gray-500 flex items-center justify-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin text-magizh-800" />
+              <span>Loading customer directory from SQLite...</span>
+            </div>
+          ) : (() => {
+            const query = customerSearch.trim().toLowerCase();
+            const filtered = adminCustomers.filter((c) => {
+              if (!query) return true;
+              return (
+                (c.name && c.name.toLowerCase().includes(query)) ||
+                (c.mobile && c.mobile.includes(query)) ||
+                (c.customerCode && c.customerCode.toLowerCase().includes(query)) ||
+                (c.id && c.id.toLowerCase().includes(query)) ||
+                (c.email && c.email.toLowerCase().includes(query))
+              );
+            });
+
+            if (filtered.length === 0) {
+              return (
+                <div className="py-12 text-center bg-cream-50/50 rounded-2xl border border-dashed border-cream-300">
+                  <Users className="w-10 h-10 text-gray-300 mx-auto mb-2" />
+                  <p className="text-xs font-bold text-gray-500">No customers found matching "{customerSearch}".</p>
+                </div>
+              );
+            }
+
+            return (
+              <div className="overflow-x-auto border border-cream-200 rounded-2xl">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-cream-100/70 border-b border-cream-200 text-darkbrown-800 text-[11px] font-black uppercase">
+                    <tr>
+                      <th className="p-3">Customer Name</th>
+                      <th className="p-3">Mobile</th>
+                      <th className="p-3">User ID</th>
+                      <th className="p-3">Address</th>
+                      <th className="p-3">Registration Date</th>
+                      <th className="p-3">Status</th>
+                      <th className="p-3">Total Orders</th>
+                      <th className="p-3 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-cream-100 bg-white">
+                    {filtered.map((c) => {
+                      const primaryAddr = Array.isArray(c.addresses) && c.addresses.length > 0 ? c.addresses[0] : null;
+                      const addrText = primaryAddr
+                        ? [primaryAddr.doorNo, primaryAddr.street, primaryAddr.district, primaryAddr.pinCode]
+                            .filter(Boolean)
+                            .join(', ') || primaryAddr.addressLine
+                        : 'No address added';
+
+                      return (
+                        <tr key={c.id} className="hover:bg-cream-50/50 transition-colors">
+                          <td className="p-3">
+                            <div className="flex items-center gap-2">
+                              <div className="w-7 h-7 rounded-full bg-magizh-100 text-magizh-800 flex items-center justify-center font-extrabold text-[11px] shrink-0">
+                                {c.name ? c.name.charAt(0).toUpperCase() : 'C'}
+                              </div>
+                              <div>
+                                <p className="font-extrabold text-darkbrown-900 leading-tight">{c.name || 'Unnamed Customer'}</p>
+                                <p className="text-[10px] text-gray-500 truncate max-w-[140px]">{c.email || 'No email'}</p>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="p-3 font-mono font-bold text-darkbrown-900 whitespace-nowrap">
+                            {c.mobile}
+                          </td>
+                          <td className="p-3">
+                            <span className="font-mono text-[10px] bg-cream-100 text-darkbrown-800 px-2 py-0.5 rounded font-bold">
+                              {c.customerCode || c.id}
+                            </span>
+                          </td>
+                          <td className="p-3 text-gray-600 text-[11px] max-w-[220px] truncate" title={addrText}>
+                            {addrText}
+                          </td>
+                          <td className="p-3 text-gray-500 whitespace-nowrap text-[11px]">
+                            {c.createdAt ? new Date(c.createdAt).toLocaleDateString() : 'N/A'}
+                          </td>
+                          <td className="p-3 whitespace-nowrap">
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                                c.status !== 'suspended'
+                                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                  : 'bg-red-100 text-red-800 border border-red-300'
+                              }`}
+                            >
+                              {c.status || 'Active'}
+                            </span>
+                          </td>
+                          <td className="p-3 font-bold text-darkbrown-900 whitespace-nowrap">
+                            {c.totalOrders ?? orders.filter((o) => o.customerId === c.id || o.customerPhone === c.mobile).length} order(s)
+                          </td>
+                          <td className="p-3 text-right whitespace-nowrap">
+                            <button
+                              type="button"
+                              onClick={() => loadCustomerOrders(c)}
+                              className="px-2.5 py-1 bg-magizh-50 hover:bg-magizh-100 text-magizh-900 border border-magizh-300 rounded-lg text-xs font-bold transition-all inline-flex items-center gap-1"
+                            >
+                              <ShoppingBag className="w-3 h-3 text-magizh-800" />
+                              <span>Order History</span>
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })()}
+
+          {/* Customer Order History Modal */}
+          {selectedCustomerForHistory && (
+            <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+              <div className="bg-white rounded-3xl border border-cream-300 max-w-2xl w-full max-h-[85vh] overflow-hidden flex flex-col shadow-2xl animate-in zoom-in-95">
+                <div className="p-4 border-b border-cream-200 flex items-center justify-between bg-cream-50/70">
+                  <div>
+                    <h3 className="font-extrabold text-sm text-darkbrown-900">
+                      Order History &bull; {selectedCustomerForHistory.name}
+                    </h3>
+                    <p className="text-[11px] text-gray-500 font-mono">
+                      {selectedCustomerForHistory.customerCode || selectedCustomerForHistory.id} &bull; {selectedCustomerForHistory.mobile}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCustomerForHistory(null)}
+                    className="p-1.5 hover:bg-cream-200 rounded-full text-gray-500 transition-colors"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="p-4 overflow-y-auto space-y-3 flex-1 text-xs">
+                  {isLoadingCustomerOrders ? (
+                    <div className="py-8 text-center text-gray-500 flex items-center justify-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin text-magizh-800" />
+                      <span>Loading customer order records...</span>
+                    </div>
+                  ) : selectedCustomerOrders.length === 0 ? (
+                    <div className="py-8 text-center bg-cream-50 rounded-2xl border border-dashed border-cream-300 text-gray-500 font-bold">
+                      No orders placed by this customer yet.
+                    </div>
+                  ) : (
+                    selectedCustomerOrders.map((ord) => (
+                      <div
+                        key={ord.id}
+                        className="p-3 bg-cream-50/50 border border-cream-200 rounded-2xl space-y-2"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-extrabold font-mono text-darkbrown-900 text-sm">
+                            #{ord.orderNumber}
+                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                                ord.paymentStatus === 'Paid'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : 'bg-amber-100 text-amber-900'
+                              }`}
+                            >
+                              {ord.paymentStatus}
+                            </span>
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-cream-200 text-darkbrown-800">
+                              {ord.orderStatus}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex justify-between items-center text-[11px] text-gray-600">
+                          <span>Date: {new Date(ord.createdAt).toLocaleString()}</span>
+                          <span className="font-extrabold text-magizh-900 text-xs">₹{ord.finalPayableAmount}</span>
+                        </div>
+
+                        {ord.paymentUtr && (
+                          <div className="text-[10px] font-mono bg-white p-1.5 rounded-lg border border-cream-200 text-darkbrown-800">
+                            <strong>UTR:</strong> {ord.paymentUtr}
+                          </div>
+                        )}
+
+                        <div className="text-[11px] text-gray-600">
+                          <strong>Items ({ord.items?.length || 0}):</strong>{' '}
+                          {ord.items?.map((it: any) => `${it.name} (${it.variantWeight || ''}) x${it.quantity}`).join(', ')}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <div className="p-3 border-t border-cream-200 bg-cream-50 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCustomerForHistory(null)}
+                    className="px-4 py-1.5 bg-darkbrown-900 hover:bg-darkbrown-800 text-white rounded-xl text-xs font-bold"
+                  >
+                    Close History
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 5. ADMIN PAYMENT & UTR MANAGEMENT (Part 5) */}
+      {activeSidebarTab === 'payments' && (
+        <div className="bg-white rounded-3xl border border-cream-300 p-5 shadow-2xs space-y-4 animate-in fade-in">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-cream-200 pb-3">
+            <div>
+              <h2 className="text-sm font-extrabold text-darkbrown-900 flex items-center gap-2">
+                <CreditCard className="w-4 h-4 text-emerald-800" />
+                <span>UPI Payment Verification &amp; UTR Transaction Ledger</span>
+              </h2>
+              <p className="text-xs text-gray-500">
+                12-digit UTR validation, anti-duplicate controls, customer payment verification and history
               </p>
             </div>
             <button
-              onClick={loadAdminBills}
-              className="px-3 py-1.5 bg-cream-100 hover:bg-cream-200 text-darkbrown-800 rounded-xl text-xs font-bold transition-all flex items-center gap-1 self-start"
+              type="button"
+              onClick={loadAdminPayments}
+              className="px-3 py-1.5 bg-cream-100 hover:bg-cream-200 text-darkbrown-800 rounded-xl text-xs font-bold transition-all flex items-center gap-1 self-start sm:self-auto"
             >
               <RotateCcw className="w-3.5 h-3.5" />
-              <span>Refresh Bills</span>
+              <span>Refresh Ledger</span>
             </button>
           </div>
 
-          <div className="space-y-4">
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-xs font-black uppercase text-amber-900 tracking-wider">
-                  Pending Admin Approval ({pendingBills.length})
-                </h3>
-                <span className="text-[11px] text-gray-500">Awaiting your approval to deduct customer coins</span>
-              </div>
+          {/* Payment Status Filter Subtabs */}
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 border-b border-cream-200">
+            {[
+              { id: 'all', label: 'All Payments' },
+              { id: 'pending', label: 'Pending Verification' },
+              { id: 'verified', label: 'Verified (Paid)' },
+              { id: 'rejected', label: 'Rejected / Failed' },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setPaymentStatusFilter(tab.id as any)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                  paymentStatusFilter === tab.id
+                    ? 'bg-magizh-800 text-white shadow-xs'
+                    : 'bg-cream-100 hover:bg-cream-200 text-darkbrown-800'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
 
-              {isLoadingBills ? (
-                <div className="text-center py-6 text-xs text-gray-500 flex items-center justify-center gap-2">
-                  <Loader2 className="w-4 h-4 animate-spin text-emerald-700" />
-                  <span>Loading pending bills...</span>
-                </div>
-              ) : pendingBills.length === 0 ? (
-                <div className="p-6 bg-cream-50 rounded-2xl border border-cream-200 text-center text-xs text-gray-500">
-                  <CheckCircle2 className="w-8 h-8 text-emerald-600 mx-auto mb-1.5 opacity-60" />
-                  <p>All in-store partner bills are verified! No bills pending approval.</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {pendingBills.map((bill) => (
-                    <div
-                      key={bill.id}
-                      className="p-4 border-2 border-amber-300 rounded-2xl bg-amber-50/40 text-xs space-y-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs"
-                    >
-                      <div className="space-y-1.5 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-extrabold text-sm text-darkbrown-900 font-mono">
-                            Bill #{bill.billNumber}
-                          </span>
-                          <span className="bg-amber-100 text-amber-900 text-[10px] font-black px-2.5 py-0.5 rounded-full border border-amber-300">
-                            Payment Received via {bill.customerPaymentChoice?.toUpperCase() || 'CASH'}
-                          </span>
-                          <span className="text-[11px] text-gray-500 font-mono">
-                            {new Date(bill.createdAt).toLocaleString()}
-                          </span>
-                        </div>
+          {/* Search Box */}
+          <div className="relative">
+            <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={paymentSearch}
+              onChange={(e) => setPaymentSearch(e.target.value)}
+              placeholder="Search payments by 12-digit UTR, Order Number, Customer Name, or Mobile..."
+              className="w-full pl-9 pr-4 py-2.5 bg-cream-50/50 border border-cream-300 rounded-xl text-xs font-medium focus:outline-none focus:ring-1 focus:ring-magizh-700"
+            />
+          </div>
 
-                        <p className="text-gray-700">
-                          Partner Shop: <strong className="text-darkbrown-900">{bill.partnerName}</strong>
-                        </p>
-                        <p className="text-gray-700">
-                          Customer: <strong className="text-darkbrown-900">{bill.customerName}</strong> ({bill.customerPhone})
-                        </p>
-                        {bill.itemsSummary && (
-                          <p className="text-[11px] text-gray-600 italic">"{bill.itemsSummary}"</p>
-                        )}
-                      </div>
-
-                      <div className="flex sm:flex-col sm:items-end justify-between items-center gap-3 pt-2 sm:pt-0 border-t sm:border-0 border-cream-200">
-                        <div className="text-right">
-                          <div className="font-black text-sm text-magizh-900">
-                            Total Bill: ₹{bill.billAmount}
-                          </div>
-                          <div className="text-xs font-black text-amber-800">
-                            Coins to Deduct: -{bill.coinsToRedeem} B5 Coins
-                          </div>
-                          <div className="text-xs font-bold text-darkbrown-900">
-                            Payable Amount: ₹{bill.payableAmount}
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => handleDecideBill(bill.id, 'reject')}
-                            disabled={decidingBillId === bill.id}
-                            className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-300 rounded-xl font-bold text-xs transition-all disabled:opacity-50"
-                          >
-                            Reject
-                          </button>
-                          <button
-                            onClick={() => handleDecideBill(bill.id, 'approve')}
-                            disabled={decidingBillId === bill.id}
-                            className="px-4 py-1.5 bg-emerald-800 hover:bg-emerald-900 text-white rounded-xl font-bold text-xs shadow-xs transition-all flex items-center gap-1 disabled:opacity-50"
-                          >
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                            <span>Approve &amp; Deduct Coins</span>
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+          {/* Payments Table */}
+          {isLoadingPayments ? (
+            <div className="py-12 text-center text-xs text-gray-500 flex items-center justify-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin text-emerald-800" />
+              <span>Loading payments ledger from SQLite...</span>
             </div>
+          ) : (() => {
+            const query = paymentSearch.trim().toLowerCase();
+            const filtered = adminPayments.filter((p) => {
+              if (paymentStatusFilter === 'pending' && p.verificationStatus !== 'Pending Verification') return false;
+              if (paymentStatusFilter === 'verified' && p.verificationStatus !== 'Verified') return false;
+              if (paymentStatusFilter === 'rejected' && p.verificationStatus !== 'Rejected') return false;
 
-            {/* All In-Store Bills History */}
-            {allBills.length > 0 && (
-              <div className="pt-4 border-t border-cream-200">
-                <h3 className="text-xs font-black uppercase text-darkbrown-900 tracking-wider mb-2">
-                  All In-Store Bills History ({allBills.length})
-                </h3>
-                <div className="space-y-2">
-                  {allBills.slice(0, 10).map((b) => (
-                    <div
-                      key={b.id}
-                      className="p-3 bg-cream-50/50 rounded-xl border border-cream-200 text-xs flex justify-between items-center"
-                    >
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono font-bold text-darkbrown-900">#{b.billNumber}</span>
-                          <span className="font-semibold text-gray-700">{b.partnerName} &bull; {b.customerName}</span>
+              if (!query) return true;
+              return (
+                (p.paymentUtr && p.paymentUtr.toLowerCase().includes(query)) ||
+                (p.orderNumber && p.orderNumber.toLowerCase().includes(query)) ||
+                (p.customerName && p.customerName.toLowerCase().includes(query)) ||
+                (p.customerPhone && p.customerPhone.includes(query))
+              );
+            });
+
+            if (filtered.length === 0) {
+              return (
+                <div className="py-12 text-center bg-cream-50/50 rounded-2xl border border-dashed border-cream-300">
+                  <CreditCard className="w-10 h-10 text-gray-300 mx-auto mb-2" />
+                  <p className="text-xs font-bold text-gray-500">No payment records found.</p>
+                </div>
+              );
+            }
+
+            return (
+              <div className="overflow-x-auto border border-cream-200 rounded-2xl">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-cream-100/70 border-b border-cream-200 text-darkbrown-800 text-[11px] font-black uppercase">
+                    <tr>
+                      <th className="p-3">Customer Name</th>
+                      <th className="p-3">Mobile Number</th>
+                      <th className="p-3">Order ID</th>
+                      <th className="p-3">Payment Amount</th>
+                      <th className="p-3">UTR / Transaction ID</th>
+                      <th className="p-3">Payment Date</th>
+                      <th className="p-3">Payment Status</th>
+                      <th className="p-3">Verification</th>
+                      <th className="p-3 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-cream-100 bg-white">
+                    {filtered.map((p) => (
+                      <tr key={p.orderId} className="hover:bg-cream-50/50 transition-colors">
+                        <td className="p-3 font-bold text-darkbrown-900">{p.customerName}</td>
+                        <td className="p-3 font-mono font-bold text-gray-700 whitespace-nowrap">{p.customerPhone}</td>
+                        <td className="p-3 font-mono font-bold text-magizh-900 whitespace-nowrap">#{p.orderNumber}</td>
+                        <td className="p-3 font-black text-darkbrown-900 whitespace-nowrap">₹{p.paymentAmount}</td>
+                        <td className="p-3 whitespace-nowrap">
+                          {p.paymentUtr ? (
+                            <div className="flex items-center gap-1.5">
+                              <code className="font-mono text-[10px] bg-amber-50 border border-amber-200 text-amber-950 px-2 py-0.5 rounded font-black">
+                                {p.paymentUtr}
+                              </code>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(p.paymentUtr);
+                                  showNotification('UTR copied to clipboard!');
+                                }}
+                                className="text-[10px] font-bold text-magizh-800 underline hover:text-magizh-900"
+                              >
+                                Copy
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-[10px] text-gray-400 italic">No UTR submitted</span>
+                          )}
+                        </td>
+                        <td className="p-3 text-gray-500 text-[11px] whitespace-nowrap">
+                          {p.paymentDate ? new Date(p.paymentDate).toLocaleString() : 'N/A'}
+                        </td>
+                        <td className="p-3 whitespace-nowrap">
                           <span
-                            className={`text-[9px] font-black px-2 py-0.2 rounded-full uppercase ${
-                              b.status === 'COMPLETED'
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                              p.paymentStatus === 'Paid'
                                 ? 'bg-emerald-100 text-emerald-800'
-                                : b.status === 'REJECTED'
-                                ? 'bg-rose-100 text-rose-800'
-                                : 'bg-amber-100 text-amber-800'
+                                : p.paymentStatus === 'Failed'
+                                ? 'bg-red-100 text-red-800'
+                                : 'bg-amber-100 text-amber-900'
                             }`}
                           >
-                            {b.status}
+                            {p.paymentStatus}
                           </span>
-                        </div>
-                        <span className="text-[10px] text-gray-400 font-mono">
-                          {new Date(b.createdAt).toLocaleDateString()} &bull; Total: ₹{b.billAmount} | Coins: {b.coinsToRedeem}
-                        </span>
-                      </div>
-                      <span className="font-bold text-darkbrown-900">₹{b.payableAmount}</span>
+                        </td>
+                        <td className="p-3 whitespace-nowrap">
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                              p.verificationStatus === 'Verified'
+                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                : p.verificationStatus === 'Rejected'
+                                ? 'bg-red-100 text-red-800 border border-red-300'
+                                : 'bg-amber-100 text-amber-900 border border-amber-300'
+                            }`}
+                          >
+                            {p.verificationStatus}
+                          </span>
+                        </td>
+                        <td className="p-3 text-right whitespace-nowrap">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedOrderForPaymentDetails(p.order)}
+                              className="px-2 py-1 bg-cream-100 hover:bg-cream-200 text-darkbrown-800 rounded-lg text-xs font-bold"
+                            >
+                              View Details
+                            </button>
+
+                            {p.verificationStatus === 'Pending Verification' && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    await handleVerifyPayment(p.orderId);
+                                    await loadAdminPayments();
+                                  }}
+                                  className="px-2.5 py-1 bg-emerald-800 hover:bg-emerald-900 text-white rounded-lg text-xs font-bold shadow-2xs"
+                                >
+                                  Confirm
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    const reason = prompt('Enter rejection note for this payment:');
+                                    if (reason !== null) {
+                                      await handleRejectPayment(p.orderId, reason.trim() || 'Invalid UTR');
+                                      await loadAdminPayments();
+                                    }
+                                  }}
+                                  className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-300 rounded-lg text-xs font-bold"
+                                >
+                                  Reject
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })()}
+
+          {/* Payment & Order Details Modal */}
+          {selectedOrderForPaymentDetails && (
+            <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+              <div className="bg-white rounded-3xl border border-cream-300 max-w-lg w-full max-h-[85vh] overflow-hidden flex flex-col shadow-2xl animate-in zoom-in-95">
+                <div className="p-4 border-b border-cream-200 flex items-center justify-between bg-cream-50/70">
+                  <div>
+                    <h3 className="font-extrabold text-sm text-darkbrown-900">
+                      Payment &amp; Order #{selectedOrderForPaymentDetails.orderNumber}
+                    </h3>
+                    <p className="text-[11px] text-gray-500 font-mono">
+                      Customer: {selectedOrderForPaymentDetails.customerName} &bull; {selectedOrderForPaymentDetails.customerPhone}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedOrderForPaymentDetails(null)}
+                    className="p-1.5 hover:bg-cream-200 rounded-full text-gray-500"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="p-4 overflow-y-auto space-y-3 flex-1 text-xs">
+                  <div className="bg-cream-50 p-3 rounded-2xl border border-cream-200 space-y-1.5">
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Payable Amount:</span>
+                      <span className="font-black text-magizh-900 text-sm">₹{selectedOrderForPaymentDetails.finalPayableAmount}</span>
                     </div>
-                  ))}
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Payment Status:</span>
+                      <span className="font-bold">{selectedOrderForPaymentDetails.paymentStatus}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Submitted UTR:</span>
+                      <span className="font-mono font-bold text-amber-900">{selectedOrderForPaymentDetails.paymentUtr || 'None'}</span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <h4 className="font-black text-[11px] text-gray-500 uppercase tracking-wider">Order Items:</h4>
+                    {selectedOrderForPaymentDetails.items?.map((it: any, idx: number) => (
+                      <div key={idx} className="flex justify-between items-center py-1 border-b border-cream-100">
+                        <span>{it.name} ({it.variantWeight}) x{it.quantity}</span>
+                        <span className="font-bold">₹{it.price * it.quantity}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {Array.isArray(selectedOrderForPaymentDetails.timeline) && (
+                    <div className="space-y-1.5 pt-2">
+                      <h4 className="font-black text-[11px] text-gray-500 uppercase tracking-wider">Verification History / Audit:</h4>
+                      <div className="space-y-1">
+                        {selectedOrderForPaymentDetails.timeline.map((t: any, idx: number) => (
+                          <div key={idx} className="p-2 bg-cream-50/50 rounded-xl text-[11px] border border-cream-200">
+                            <div className="flex justify-between text-gray-500 text-[10px]">
+                              <span className="font-bold text-darkbrown-900">{t.status}</span>
+                              <span>{new Date(t.timestamp).toLocaleString()}</span>
+                            </div>
+                            <p className="text-gray-700 mt-0.5">{t.note}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-3 border-t border-cream-200 bg-cream-50 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedOrderForPaymentDetails(null)}
+                    className="px-4 py-1.5 bg-darkbrown-900 hover:bg-darkbrown-800 text-white rounded-xl text-xs font-bold"
+                  >
+                    Close
+                  </button>
                 </div>
               </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -2078,23 +2654,54 @@ export const AdminPanel: React.FC = () => {
             </form>
           </div>
 
-          {/* 5-Tab Order Pipeline */}
+          {/* 5-Tab Order Pipeline (Strict Stage Separation) */}
           {(() => {
             const allOrdersCount = orders.length;
-            const paymentVerifyCount = orders.filter((o) => o.paymentStatus !== 'Paid' || o.orderStatus === 'Pending Payment' || o.orderStatus === 'Confirmed').length;
-            const processingOrdersCount = orders.filter((o) => ['Processing', 'Packed'].includes(o.orderStatus)).length;
-            const deliveryOrdersCount = orders.filter((o) => ['Shipped', 'Out for Delivery', 'Delivered', 'Completed'].includes(o.orderStatus)).length;
+            const paymentVerifyCount = orders.filter(
+              (o) =>
+                o.orderStatus !== 'Cancelled' &&
+                (o.orderStatus === 'Pending Payment' ||
+                  o.paymentStatus === 'PAYMENT_PENDING' ||
+                  o.paymentStatus === 'Pending' ||
+                  (o.paymentStatus !== 'Paid' &&
+                    !['Shipped', 'Out for Delivery', 'Delivered', 'Completed'].includes(o.orderStatus)))
+            ).length;
+            const processingOrdersCount = orders.filter(
+              (o) =>
+                o.orderStatus !== 'Cancelled' &&
+                o.paymentStatus === 'Paid' &&
+                ['Confirmed', 'Processing', 'Packed'].includes(o.orderStatus)
+            ).length;
+            const deliveryOrdersCount = orders.filter(
+              (o) =>
+                o.orderStatus !== 'Cancelled' &&
+                ['Shipped', 'Out for Delivery', 'Delivered', 'Completed'].includes(o.orderStatus)
+            ).length;
             const cancelledOrdersCount = orders.filter((o) => o.orderStatus === 'Cancelled').length;
 
             const filteredOrders = orders.filter((ord) => {
               if (orderSubTab === 'payment_verify') {
-                return ord.paymentStatus !== 'Paid' || ord.orderStatus === 'Pending Payment' || ord.orderStatus === 'Confirmed';
+                return (
+                  ord.orderStatus !== 'Cancelled' &&
+                  (ord.orderStatus === 'Pending Payment' ||
+                    ord.paymentStatus === 'PAYMENT_PENDING' ||
+                    ord.paymentStatus === 'Pending' ||
+                    (ord.paymentStatus !== 'Paid' &&
+                      !['Shipped', 'Out for Delivery', 'Delivered', 'Completed'].includes(ord.orderStatus)))
+                );
               }
               if (orderSubTab === 'processing') {
-                return ['Processing', 'Packed'].includes(ord.orderStatus);
+                return (
+                  ord.orderStatus !== 'Cancelled' &&
+                  ord.paymentStatus === 'Paid' &&
+                  ['Confirmed', 'Processing', 'Packed'].includes(ord.orderStatus)
+                );
               }
               if (orderSubTab === 'delivery') {
-                return ['Shipped', 'Out for Delivery', 'Delivered', 'Completed'].includes(ord.orderStatus);
+                return (
+                  ord.orderStatus !== 'Cancelled' &&
+                  ['Shipped', 'Out for Delivery', 'Delivered', 'Completed'].includes(ord.orderStatus)
+                );
               }
               if (orderSubTab === 'cancelled') {
                 return ord.orderStatus === 'Cancelled';
@@ -2130,7 +2737,7 @@ export const AdminPanel: React.FC = () => {
                     }`}
                   >
                     <Clock className="w-3.5 h-3.5" />
-                    <span>Payment Verify / Confirmed</span>
+                    <span>Payment Verify</span>
                     <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${orderSubTab === 'payment_verify' ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-800 font-bold'}`}>
                       {paymentVerifyCount}
                     </span>
@@ -2162,7 +2769,7 @@ export const AdminPanel: React.FC = () => {
                     }`}
                   >
                     <Truck className="w-3.5 h-3.5" />
-                    <span>Delivery / Shipped</span>
+                    <span>Shipping / Delivery</span>
                     <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${orderSubTab === 'delivery' ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-800 font-bold'}`}>
                       {deliveryOrdersCount}
                     </span>
@@ -2362,51 +2969,127 @@ export const AdminPanel: React.FC = () => {
                       )}
                     </div>
 
-                    {/* Manual Payment Verification Button for UPI */}
-                    {ord.paymentStatus === 'PAYMENT_PENDING' && (
-                      <div className="p-2.5 bg-amber-50 border border-amber-300 rounded-xl space-y-1.5">
-                        <div className="flex items-center justify-between">
-                          <span className="font-black text-amber-950 flex items-center gap-1">
-                            <Clock className="w-3.5 h-3.5 text-amber-600" />
-                            <span>UPI Payment Pending Verification</span>
-                          </span>
-                        </div>
-                        <button
-                          onClick={() => handleVerifyPayment(ord.id)}
-                          disabled={verifyingOrderId === ord.id}
-                          className="w-full py-1.5 bg-emerald-800 hover:bg-emerald-900 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition-all disabled:opacity-50"
-                        >
-                          {verifyingOrderId === ord.id ? (
-                            <Loader2 className="w-3 h-3 animate-spin" />
-                          ) : (
-                            <CheckCircle2 className="w-3 h-3" />
-                          )}
-                          <span>Verify &amp; Confirm Payment</span>
-                        </button>
-                      </div>
-                    )}
                   </div>
                 </div>
 
-                {/* Status Advancement Controls */}
-                <div className="pt-2 border-t border-cream-200 flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="text-[11px] font-bold text-gray-600">Change Status:</span>
-                    {['Confirmed', 'Processing', 'Packed', 'Shipped', 'Delivered', 'Completed', 'Cancelled'].map((st) => (
+                {/* Stage-Appropriate Action Controls (Replacing Changing Status Dropdown) */}
+                <div className="pt-2.5 border-t border-cream-200 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {/* If Cancelled */}
+                    {ord.orderStatus === 'Cancelled' && (
+                      <div className="flex items-center gap-1.5 text-xs text-red-700 font-bold bg-red-50 px-3 py-1.5 rounded-xl border border-red-200">
+                        <XCircle className="w-4 h-4 text-red-600" />
+                        <span>Order Cancelled &bull; Archived History</span>
+                      </div>
+                    )}
+
+                    {/* Stage: Payment Verify (Pending Payment or UTR awaiting check) */}
+                    {ord.orderStatus !== 'Cancelled' && ord.paymentStatus !== 'Paid' && (
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => handleVerifyPayment(ord.id)}
+                          disabled={verifyingOrderId === ord.id}
+                          className="px-3.5 py-1.5 bg-emerald-800 hover:bg-emerald-900 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all disabled:opacity-50"
+                        >
+                          {verifyingOrderId === ord.id ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                          )}
+                          <span>Confirm Payment &amp; Move to Processing</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const reason = prompt('Enter payment rejection note:');
+                            if (reason !== null) {
+                              await handleRejectPayment(ord.id, reason.trim() || 'Invalid UTR');
+                            }
+                          }}
+                          className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-300 rounded-xl text-xs font-bold transition-all"
+                        >
+                          Reject Payment
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Stage: Processing (Paid & in Confirmed / Processing / Packed) */}
+                    {ord.orderStatus !== 'Cancelled' &&
+                      ord.paymentStatus === 'Paid' &&
+                      (ord.orderStatus === 'Confirmed' || ord.orderStatus === 'Processing') && (
+                        <button
+                          type="button"
+                          onClick={() => handleUpdateOrderStatus(ord.id, 'Packed')}
+                          className="px-3.5 py-1.5 bg-indigo-700 hover:bg-indigo-800 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all"
+                        >
+                          <Package className="w-3.5 h-3.5" />
+                          <span>Mark Order as Packed</span>
+                        </button>
+                      )}
+
+                    {ord.orderStatus === 'Packed' && (
                       <button
-                        key={st}
-                        onClick={() => handleUpdateOrderStatus(ord.id, st)}
-                        disabled={ord.orderStatus === st}
-                        className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${
-                          ord.orderStatus === st
-                            ? 'bg-darkbrown-900 text-white cursor-default'
-                            : 'bg-white hover:bg-cream-200 border border-cream-300 text-darkbrown-800'
-                        }`}
+                        type="button"
+                        onClick={() => handleUpdateOrderStatus(ord.id, 'Shipped')}
+                        className="px-3.5 py-1.5 bg-indigo-800 hover:bg-indigo-900 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all"
                       >
-                        {st}
+                        <Truck className="w-3.5 h-3.5 text-amber-300" />
+                        <span>Ship Order / Handover to Courier</span>
                       </button>
-                    ))}
+                    )}
+
+                    {/* Stage: Shipping / Delivery */}
+                    {ord.orderStatus === 'Shipped' && (
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateOrderStatus(ord.id, 'Out for Delivery')}
+                        className="px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all"
+                      >
+                        <Truck className="w-3.5 h-3.5" />
+                        <span>Mark Out for Delivery</span>
+                      </button>
+                    )}
+
+                    {ord.orderStatus === 'Out for Delivery' && (
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateOrderStatus(ord.id, 'Delivered')}
+                        className="px-3.5 py-1.5 bg-emerald-800 hover:bg-emerald-900 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>Mark Delivered &amp; Completed</span>
+                      </button>
+                    )}
+
+                    {(ord.orderStatus === 'Delivered' || ord.orderStatus === 'Completed') && (
+                      <div className="flex items-center gap-1.5 text-xs text-emerald-800 font-bold bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-300">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-700" />
+                        <span>Delivered Successfully</span>
+                      </div>
+                    )}
                   </div>
+
+                  {/* Cancel Order Action (Only for active un-delivered orders) */}
+                  {ord.orderStatus !== 'Cancelled' &&
+                    ord.orderStatus !== 'Delivered' &&
+                    ord.orderStatus !== 'Completed' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const reason = prompt(
+                            'Please enter cancellation reason for Order #' + ord.orderNumber + ':'
+                          );
+                          if (reason !== null) {
+                            handleUpdateOrderStatus(ord.id, 'Cancelled');
+                          }
+                        }}
+                        className="px-2.5 py-1 text-red-600 hover:bg-red-50 rounded-lg text-xs font-bold transition-all"
+                      >
+                        Cancel Order
+                      </button>
+                    )}
                 </div>
               </div>
                     ))}
@@ -3575,51 +4258,6 @@ export const AdminPanel: React.FC = () => {
         </div>
       )}
 
-      {/* 9. LEVEL 1-7 SETTINGS */}
-      {false && (
-        <div className="bg-white rounded-3xl border border-cream-300 p-5 shadow-2xs space-y-4">
-          <div className="border-b border-cream-200 pb-3 flex justify-between items-center">
-            <div>
-              <h2 className="text-sm font-extrabold text-darkbrown-900">
-                Referral & Sales Leadership Levels 1–7
-              </h2>
-              <p className="text-xs text-gray-500">
-                Multi-tier qualification, team volume minimums, and direct team commission %
-              </p>
-            </div>
-            <span className="text-xs font-mono font-bold text-gray-500">7 Active Levels</span>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {levels.map((lvl) => (
-              <div
-                key={lvl.level}
-                className="p-3.5 border border-cream-300 rounded-2xl bg-cream-50/50 text-xs space-y-2"
-              >
-                <div className="flex justify-between items-center">
-                  <span className="font-black text-darkbrown-900">
-                    Level {lvl.level}: {lvl.title}
-                  </span>
-                  <span className="bg-purple-100 text-purple-900 text-[10px] font-black px-2 py-0.5 rounded">
-                    {lvl.commissionPercentage}% Commission
-                  </span>
-                </div>
-                <div className="space-y-1 text-gray-600 text-[11px] bg-white p-2.5 rounded-xl border border-cream-200">
-                  <div className="flex justify-between">
-                    <span>Direct Active Members:</span>
-                    <span className="font-bold">{lvl.minReferrals}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Min Monthly Sales Volume:</span>
-                    <span className="font-bold">₹{lvl.minTeamVolume.toLocaleString()}</span>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
       {/* CLOUD DATABASE & AUTOMATIC BACKUPS MANAGEMENT */}
       {activeSidebarTab === 'database' && (
         <div className="bg-white rounded-3xl border border-cream-300 p-5 sm:p-6 shadow-2xs space-y-6 animate-in fade-in">
@@ -4124,6 +4762,50 @@ export const AdminPanel: React.FC = () => {
                 </div>
               </div>
 
+              {/* Product Availability Status (Available vs Coming Soon) */}
+              <div className="bg-cream-50/80 p-3.5 rounded-2xl border border-cream-300 space-y-2">
+                <label className="block text-darkbrown-900 font-extrabold text-xs">
+                  Product Availability Status *
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setEditingProduct({ ...editingProduct, status: 'active' })}
+                    className={`p-2.5 rounded-xl border text-left transition-all ${
+                      editingProduct.status !== 'coming_soon'
+                        ? 'bg-emerald-50 border-emerald-500 text-emerald-950 ring-2 ring-emerald-400 font-bold'
+                        : 'bg-white border-cream-300 text-gray-700 hover:bg-cream-100'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-600" />
+                      <span className="font-extrabold text-xs">Available for Sale</span>
+                    </div>
+                    <p className="text-[10px] text-gray-500 mt-0.5">
+                      Customers see selling price, can add to cart and buy immediately.
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setEditingProduct({ ...editingProduct, status: 'coming_soon' })}
+                    className={`p-2.5 rounded-xl border text-left transition-all ${
+                      editingProduct.status === 'coming_soon'
+                        ? 'bg-amber-50 border-amber-500 text-amber-950 ring-2 ring-amber-400 font-bold'
+                        : 'bg-white border-cream-300 text-gray-700 hover:bg-cream-100'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 text-amber-600" />
+                      <span className="font-extrabold text-xs">Coming Soon (Preview)</span>
+                    </div>
+                    <p className="text-[10px] text-gray-500 mt-0.5">
+                      Display product &amp; image; strictly hide price, cart and buy buttons.
+                    </p>
+                  </button>
+                </div>
+              </div>
+
               <div>
                 <label className="block text-gray-700 font-bold mb-1">Description *</label>
                 <textarea
@@ -4211,7 +4893,7 @@ export const AdminPanel: React.FC = () => {
                   {editingProduct.variants.map((v, vIdx) => (
                     <div
                       key={vIdx}
-                      className="grid grid-cols-2 sm:grid-cols-5 gap-2 bg-cream-50/60 p-2.5 rounded-xl border border-cream-200 items-end sm:items-center"
+                      className="grid grid-cols-2 sm:grid-cols-6 gap-2 bg-cream-50/60 p-2.5 rounded-xl border border-cream-200 items-end sm:items-center"
                     >
                       <div>
                         <span className="text-[9px] text-gray-500 uppercase font-bold block">Weight</span>
@@ -4273,6 +4955,24 @@ export const AdminPanel: React.FC = () => {
                             v.stock <= 10 ? 'border-amber-400 text-amber-900 bg-amber-50' : 'border-cream-300'
                           }`}
                         />
+                      </div>
+
+                      <div>
+                        <span className="text-[9px] text-gray-500 uppercase font-bold block">Coming Soon?</span>
+                        <label className="flex items-center gap-1.5 pt-1 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={v.isComingSoon || false}
+                            onChange={(e) => {
+                              const vars = [...editingProduct.variants];
+                              vars[vIdx].isComingSoon = e.target.checked;
+                              setEditingProduct({ ...editingProduct, variants: vars });
+                            }}
+                          />
+                          <span className={`text-[10px] font-bold ${v.isComingSoon ? 'text-amber-800' : 'text-gray-500'}`}>
+                            {v.isComingSoon ? 'Yes' : 'No'}
+                          </span>
+                        </label>
                       </div>
 
                       <div className="col-span-2 sm:col-span-1 flex justify-end items-center sm:pt-3">

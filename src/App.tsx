@@ -13,8 +13,6 @@ import { OrderHistoryAndTracking } from './components/customer/OrderHistoryAndTr
 import { B5CoinWalletPage } from './components/customer/B5CoinWalletPage';
 import { CustomerAccount } from './components/customer/CustomerAccount';
 import { PartnerDashboard } from './components/partner/PartnerDashboard';
-import { ReferralDashboard } from './components/referral/ReferralDashboard';
-import { SalesDashboard } from './components/sales/SalesDashboard';
 import { AdminPanel } from './components/admin/AdminPanel';
 import { PartnerShopsDirectory } from './components/customer/PartnerShopsDirectory';
 import { PartnerAuthGuard } from './components/common/PartnerAuthGuard';
@@ -29,7 +27,7 @@ export const getRouteFromPath = (pathname: string): string => {
   const p = (pathname || '/').toLowerCase().trim();
   if (p === '/admin' || p.startsWith('/admin/')) return 'admin';
   if (p === '/partner' || p.startsWith('/partner/')) return 'partner';
-  if (p === '/referral' || p.startsWith('/referral/') || p === '/sales' || p.startsWith('/sales/')) return 'referral';
+  if (p === '/referral' || p.startsWith('/referral/') || p === '/sales' || p.startsWith('/sales/')) return 'wallet';
   if (p === '/cart' || p.startsWith('/cart/')) return 'cart';
   if (p === '/checkout' || p.startsWith('/checkout/')) return 'checkout';
   if (p === '/orders' || p.startsWith('/orders/')) return 'orders';
@@ -53,7 +51,7 @@ export const getPathFromRoute = (route: string): string => {
       return '/partner';
     case 'referral':
     case 'sales':
-      return '/referral';
+      return '/wallet';
     case 'cart':
       return '/cart';
     case 'checkout':
@@ -256,15 +254,6 @@ export default function App() {
         >
           <PartnerDashboard />
         </PartnerAuthGuard>
-      );
-    }
-
-    // 3. /referral — Sales / Referral Leader Login and Dashboard
-    if (currentTab === 'referral' || currentTab === 'sales') {
-      return (
-        <div className="space-y-6">
-          <ReferralDashboard />
-        </div>
       );
     }
 

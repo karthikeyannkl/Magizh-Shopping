@@ -644,23 +644,30 @@ export const HomePage: React.FC<HomePageProps> = ({
                       >
                         {product.variants.map((v) => (
                           <option key={v.weight} value={v.weight}>
-                            {v.weight} - ₹{v.price}
+                            {product.status === 'coming_soon' || v.isComingSoon ? v.weight : `${v.weight} - ₹${v.price}`}
                           </option>
                         ))}
                       </select>
                     </div>
 
-                    {/* Price Block */}
-                    <div className="mt-2 flex items-baseline gap-1.5">
-                      <span className="text-base sm:text-lg font-black text-magizh-900">
-                        ₹{activeVariant.price}
-                      </span>
-                      {activeVariant.originalPrice > activeVariant.price && (
-                        <span className="text-xs text-gray-400 line-through">
-                          ₹{activeVariant.originalPrice}
+                    {/* Price Block / Coming Soon Notice (Strictly hide price when coming soon) */}
+                    {product.status === 'coming_soon' || activeVariant.isComingSoon ? (
+                      <div className="mt-2 py-1 px-2.5 bg-amber-50 rounded-lg border border-amber-200 text-amber-900 flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                        <span className="text-xs font-black uppercase tracking-wider">Coming Soon</span>
+                      </div>
+                    ) : (
+                      <div className="mt-2 flex items-baseline gap-1.5">
+                        <span className="text-base sm:text-lg font-black text-magizh-900">
+                          ₹{activeVariant.price}
                         </span>
-                      )}
-                    </div>
+                        {activeVariant.originalPrice > activeVariant.price && (
+                          <span className="text-xs text-gray-400 line-through">
+                            ₹{activeVariant.originalPrice}
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
 

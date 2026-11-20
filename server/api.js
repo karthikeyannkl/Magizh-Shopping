@@ -14,7 +14,6 @@ import {
 } from './security.js';
 import { sendPasswordResetEmail } from './emailService.js';
 import { lookupPinCode } from './pincodeData.js';
-import { b5CloudClient } from './b5CloudApi.js';
 import { backupService } from './backupService.js';
 
 export const apiRouter = express.Router();
@@ -635,22 +634,26 @@ apiRouter.post('/auth/logout', (req, res) => {
 });
 
 // -------------------------------------------------------------
-// B5 Cloud API Gateway Endpoints
+// Magizh B5 Coin Loyalty Ledger Endpoints
 // -------------------------------------------------------------
 
-apiRouter.get('/b5-cloud/status', (req, res) => {
-  const status = b5CloudClient.getStatus();
-  res.json({ success: true, ...status });
+apiRouter.get('/coins/status', (req, res) => {
+  res.json({
+    success: true,
+    currencyRule: '1 B5 Coin = ₹1',
+    maxRedemptionCap: '50% of original bill amount',
+    mode: 'STANDALONE_MAGIZH_COMMERCE_LEDGER',
+  });
 });
 
-apiRouter.get('/b5-cloud/customer/:identifier', async (req, res) => {
+apiRouter.get('/coins/customer/:identifier', (req, res) => {
   try {
     const identifier = req.params.identifier;
-    const balance = await b5CloudClient.lookupCustomerBalance(identifier, (id) => dbService.getCoinAccount(id));
-    if (!balance) return res.status(404).json({ error: 'Customer not found in B5 ledger.' });
-    res.json({ success: true, balance });
+    const account = dbService.getCoinAccount(identifier);
+    if (!account) return res.status(404).json({ error: 'Customer not found in B5 coin ledger.' });
+    res.json({ success: true, balance: account });
   } catch (err) {
-    res.status(500).json({ error: 'B5 Cloud customer lookup failed.' });
+    res.status(500).json({ error: 'Customer coin lookup failed.' });
   }
 });
 
@@ -902,6 +905,28 @@ apiRouter.post('/orders', (req, res) => {
       }
     }
 
+    // Backend validation: Reject order if any item is marked Coming Soon
+    if (Array.isArray(orderData.items)) {
+      for (const item of orderData.items) {
+        const product = dbService.getProductById(item.productId);
+        if (product) {
+          if (product.status === 'coming_soon') {
+            return res.status(400).json({
+              error: `Product "${product.name}" is currently Coming Soon and cannot be purchased.`,
+            });
+          }
+          const matchedVariant = product.variants?.find(
+            (v) => v.id === item.variantId || v.weight === item.variantWeight
+          );
+          if (matchedVariant?.isComingSoon) {
+            return res.status(400).json({
+              error: `Variant "${matchedVariant.weight}" for "${product.name}" is currently Coming Soon and cannot be purchased.`,
+            });
+          }
+        }
+      }
+    }
+
     // Decrement stock for purchased product variants in the database
     if (Array.isArray(orderData.items)) {
       for (const item of orderData.items) {
@@ -1057,6 +1082,86 @@ apiRouter.post('/admin/orders/:id/verify-payment', requireAdminAuth, (req, res) 
     res.json({ success: true, order: updated, message: `Payment verified successfully for Order #${updated.orderNumber}.` });
   } catch (err) {
     res.status(500).json({ error: 'Failed to verify order payment.' });
+  }
+});
+
+apiRouter.post('/admin/orders/:id/reject-payment', requireAdminAuth, (req, res) => {
+  try {
+    const { reason } = req.body;
+    const adminName = req.adminUser?.name || 'Administrator';
+    const order = dbService.getOrderById(req.params.id);
+    if (!order) return res.status(404).json({ error: 'Order not found.' });
+
+    const updated = dbService.updateOrderStatus(
+      order.id,
+      'Cancelled',
+      adminName,
+      `Payment rejected by admin: ${reason || 'Invalid or duplicate UTR'}`
+    );
+
+    dbService.logAudit(
+      'admin',
+      adminName,
+      'REJECT_ORDER_PAYMENT',
+      `Admin rejected UPI payment for Order #${order.orderNumber}. Reason: ${reason || 'Invalid or duplicate UTR'}`
+    );
+
+    res.json({ success: true, order: updated, message: `Payment rejected for Order #${order.orderNumber}.` });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to reject order payment.' });
+  }
+});
+
+// Admin Customer Management Directory (Part 4)
+apiRouter.get('/admin/customers', requireAdminAuth, (req, res) => {
+  try {
+    const customers = dbService.getCustomers();
+    res.json({ success: true, count: customers.length, customers });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch customer directory.' });
+  }
+});
+
+apiRouter.get('/admin/customers/:id/orders', requireAdminAuth, (req, res) => {
+  try {
+    const allOrders = dbService.getOrders();
+    const customer = dbService.findUserById(req.params.id) || dbService.findUserByMobile(req.params.id);
+    const orders = allOrders.filter(
+      (o) => o.customerId === req.params.id || (customer && o.customerPhone === customer.mobile)
+    );
+    res.json({ success: true, count: orders.length, orders });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch customer orders.' });
+  }
+});
+
+// Admin Payments & UTR Ledger (Part 5)
+apiRouter.get('/admin/payments', requireAdminAuth, (req, res) => {
+  try {
+    const orders = dbService.getOrders();
+    const payments = orders.map((o) => {
+      const isPaid = o.paymentStatus === 'Paid';
+      const isFailed = o.paymentStatus === 'Failed' || o.orderStatus === 'Cancelled';
+      const verificationStatus = isPaid ? 'Verified' : (isFailed ? 'Rejected' : 'Pending Verification');
+
+      return {
+        orderId: o.id,
+        orderNumber: o.orderNumber,
+        customerName: o.customerName,
+        customerPhone: o.customerPhone,
+        paymentAmount: o.finalPayableAmount || o.totalAmount || 0,
+        paymentUtr: o.paymentUtr || null,
+        paymentMethod: o.paymentMethod || 'UPI',
+        paymentDate: o.createdAt,
+        paymentStatus: o.paymentStatus,
+        verificationStatus,
+        timeline: o.timeline || [],
+        order: o,
+      };
+    });
+    res.json({ success: true, count: payments.length, payments });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch payments ledger.' });
   }
 });
 
@@ -1349,14 +1454,18 @@ apiRouter.post('/admin/partner-applications/:id/decision', requireAdminAuth, (re
   }
 });
 
-apiRouter.post('/partners/:id/toggle-status', requireAdminAuth, (req, res) => {
+const handleTogglePartnerStatus = (req, res) => {
   const { status } = req.body;
   if (!['approved', 'suspended', 'pending'].includes(status)) {
     return res.status(400).json({ error: 'Invalid status' });
   }
   dbService.updatePartnerStatus(req.params.id, status);
-  res.json({ success: true, message: `Partner status changed to ${status}` });
-});
+  const updated = dbService.getPartnerById(req.params.id);
+  res.json({ success: true, partner: updated, message: `Partner status changed to ${status}` });
+};
+
+apiRouter.post('/partners/:id/toggle-status', requireAdminAuth, handleTogglePartnerStatus);
+apiRouter.post('/admin/partners/:id/toggle-status', requireAdminAuth, handleTogglePartnerStatus);
 
 // Admin Direct Partner Shop Creation & Account Management
 apiRouter.post('/admin/partners/create', requireAdminAuth, (req, res) => {

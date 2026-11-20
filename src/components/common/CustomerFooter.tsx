@@ -92,25 +92,6 @@ export const CustomerFooter: React.FC<CustomerFooterProps> = ({ onNavigate }) =>
                 <span>Customer Profile &amp; Address Book</span>
               </button>
             </li>
-            <li className="pt-2 border-t border-cream-200 flex flex-wrap items-center gap-3 text-[11px]">
-              <button
-                onClick={() => onNavigate('partner')}
-                className="text-blue-800 hover:text-blue-950 font-bold flex items-center gap-1 hover:underline"
-                title="Open Partner Shop Franchise Portal"
-              >
-                <Store className="w-3.5 h-3.5" />
-                <span>Partner Portal</span>
-              </button>
-              <span className="text-gray-300">&bull;</span>
-              <button
-                onClick={() => onNavigate('admin')}
-                className="text-red-900 hover:text-red-950 font-bold flex items-center gap-1 hover:underline"
-                title="Open Admin Management Console"
-              >
-                <Shield className="w-3.5 h-3.5 text-red-700" />
-                <span>Admin Console</span>
-              </button>
-            </li>
           </ul>
         </div>
       </div>

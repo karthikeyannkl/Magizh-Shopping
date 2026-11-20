@@ -845,6 +845,28 @@ export const dbService = {
     return mapUserRow(res[0].columns, res[0].values[0]);
   },
 
+  getCustomers() {
+    const res = db.exec("SELECT * FROM users WHERE role = 'customer' ORDER BY created_at DESC");
+    if (!res[0]) return [];
+    const cols = res[0].columns;
+    const allOrders = this.getOrders();
+    return res[0].values.map((row) => {
+      const u = mapUserRow(cols, row);
+      const custOrders = allOrders.filter(
+        (o) => o.customerId === u.id || o.customerPhone === u.mobile
+      );
+      const totalOrders = custOrders.length;
+      const totalSpent = custOrders
+        .filter((o) => o.paymentStatus === 'Paid')
+        .reduce((sum, o) => sum + (o.finalPayableAmount || 0), 0);
+      return {
+        ...u,
+        totalOrders,
+        totalSpent,
+      };
+    });
+  },
+
   createUser(userData) {
     db.run(
       `INSERT INTO users (id, mobile, name, email, password_hash, role, customer_code, referral_code, referred_by, addresses_json, created_at, status)
@@ -1358,6 +1380,7 @@ export const dbService = {
          pin_code = excluded.pin_code,
          address = excluded.address,
          status = excluded.status,
+         application_status = excluded.status,
          commission_rate = excluded.commission_rate,
          special_coin_bonus_multiplier = excluded.special_coin_bonus_multiplier,
          partner_redemption_cap_percentage = excluded.partner_redemption_cap_percentage,
@@ -1384,6 +1407,32 @@ export const dbService = {
   updatePartnerStatus(partnerId, status) {
     const appStatus = status === 'approved' ? 'approved' : (status === 'rejected' ? 'rejected' : status);
     db.run("UPDATE partner_shops SET status = ?, application_status = ? WHERE id = ?", [status, appStatus, partnerId]);
+
+    // Synchronize associated user account in users table
+    const partner = this.getPartnerById(partnerId);
+    if (partner) {
+      const existingUser = this.findUserByMobile(partner.mobile);
+      if (existingUser) {
+        if (status === 'approved') {
+          db.run("UPDATE users SET role = 'partner', status = 'active' WHERE id = ?", [existingUser.id]);
+        } else if (status === 'suspended') {
+          db.run("UPDATE users SET status = 'suspended' WHERE id = ?", [existingUser.id]);
+        }
+      } else if (status === 'approved') {
+        this.createUser({
+          id: `user-${partner.id}`,
+          name: partner.ownerName,
+          mobile: partner.mobile,
+          email: partner.email,
+          passwordHash: partner.passwordHash || hashPassword('partner123'),
+          role: 'partner',
+          customerCode: partner.partnerCode,
+          referralCode: `MAG-REF-${partner.partnerCode.slice(-4)}`,
+          status: 'active',
+        });
+      }
+    }
+
     persistDatabase();
   },
 

@@ -31,7 +31,6 @@ export type AdminTab =
   | 'coins'
   | 'payments'
   | 'partners'
-  | 'partnerPayments'
   | 'inventory'
   | 'reports'
   | 'settings'
@@ -125,13 +124,6 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
       icon: Building2,
       badge: badges.pendingPartners && badges.pendingPartners > 0 ? badges.pendingPartners : undefined,
       badgeColor: 'bg-orange-500 text-white',
-    },
-    {
-      id: 'partnerPayments' as AdminTab,
-      label: 'In-Store POS Bills',
-      icon: Receipt,
-      badge: badges.pendingBills && badges.pendingBills > 0 ? badges.pendingBills : undefined,
-      badgeColor: 'bg-purple-600 text-white',
     },
     {
       id: 'inventory' as AdminTab,

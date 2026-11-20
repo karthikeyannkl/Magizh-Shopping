@@ -1,0 +1,24 @@
+{
+  "status": "HEALTHY",
+  "lastSuccessfulBackup": "2026-11-19T06:02:54.930Z",
+  "lastBackupFilename": "magizh-backup-2026-11-19-060254.sqlite",
+  "lastBackupSizeBytes": 389120,
+  "lastBackupChecksum": "a7252a32effe1a2b66cf758271585ef6a546a41c057ae2e7ea198c23b850a477",
+  "lastBackupCounts": {
+    "customers": 61,
+    "products": 26,
+    "categories": 7,
+    "orders": 23,
+    "partnerApplications": 18,
+    "partnerBills": 24,
+    "coinAccounts": 59,
+    "coinLedger": 72,
+    "coinNotifications": 43,
+    "productImages": 14,
+    "auditLogs": 282
+  },
+  "retainedBackupCount": 7,
+  "minimumRetention": 7,
+  "lastError": null,
+  "nextScheduledBackup": "2026-11-20T06:02:54.941Z"
+}

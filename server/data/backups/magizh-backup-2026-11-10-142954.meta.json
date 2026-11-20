@@ -1,0 +1,25 @@
+{
+  "backupId": "bkp-2026-11-10-142954",
+  "filename": "magizh-backup-2026-11-10-142954.sqlite",
+  "type": "MANUAL_ADMIN",
+  "initiatedBy": "Administrator",
+  "createdAt": "2026-11-10T14:29:54.046Z",
+  "sizeBytes": 331776,
+  "checksum": "1a7cd18e1680565d7987aed3df8b26664fd8565a4588039fa687af87eb4c52a9",
+  "tableCounts": {
+    "customers": 52,
+    "products": 18,
+    "categories": 6,
+    "orders": 14,
+    "partnerApplications": 17,
+    "partnerBills": 17,
+    "coinAccounts": 49,
+    "coinLedger": 54,
+    "coinNotifications": 25,
+    "productImages": 8,
+    "auditLogs": 195
+  },
+  "retentionPolicy": "7_DAILY_VERSIONS_MINIMUM",
+  "storagePath": "server/data/backups/magizh-backup-2026-11-10-142954.sqlite",
+  "status": "SUCCESS"
+}

@@ -1,0 +1,869 @@
+import React, { useState, useEffect } from 'react';
+import {
+  Store,
+  MapPin,
+  Search,
+  Coins,
+  CheckCircle2,
+  ArrowRight,
+  ShieldCheck,
+  Receipt,
+  AlertCircle,
+  X,
+  Phone,
+  Sparkles,
+  QrCode,
+  Smartphone,
+  Banknote,
+  Clock,
+  RefreshCw,
+  ExternalLink,
+  ChevronRight,
+  CreditCard,
+} from 'lucide-react';
+import { StorageService, subscribe } from '../../services/storage';
+import { PartnerShop, PartnerBill, User } from '../../types';
+
+interface PartnerShopsDirectoryProps {
+  onBackToShopping: () => void;
+}
+
+export const PartnerShopsDirectory: React.FC<PartnerShopsDirectoryProps> = ({ onBackToShopping }) => {
+  const currentUser: User = StorageService.getCurrentUser();
+  const [partners, setPartners] = useState<PartnerShop[]>(StorageService.getApprovedPartners());
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedDistrict, setSelectedDistrict] = useState('All');
+  const [coinBalance, setCoinBalance] = useState(
+    StorageService.getCoinAccount(currentUser.id).availableBalance
+  );
+
+  // In-Store Live Bills State (from Server DB)
+  const [pendingBills, setPendingBills] = useState<PartnerBill[]>([]);
+  const [activeBillModal, setActiveBillModal] = useState<PartnerBill | null>(null);
+  const [selectedPaymentMode, setSelectedPaymentMode] = useState<'upi' | 'cash' | null>(null);
+  const [isUpdatingPaymentMode, setIsUpdatingPaymentMode] = useState(false);
+  const [completedBillReceipt, setCompletedBillReceipt] = useState<PartnerBill | null>(null);
+
+  // In-Store Estimate Calculator State
+  const [activeShopForPay, setActiveShopForPay] = useState<PartnerShop | null>(null);
+  const [billAmount, setBillAmount] = useState<number>(500);
+  const [coinsToRedeem, setCoinsToRedeem] = useState<number>(0);
+
+  // Fetch pending bills for this customer from authoritative backend
+  const fetchPendingBills = async () => {
+    try {
+      const res = await fetch(
+        `/api/customer/pending-bills?customerId=${encodeURIComponent(currentUser.id)}&mobile=${encodeURIComponent(
+          currentUser.mobile || ''
+        )}`
+      );
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.bills)) {
+          setPendingBills(data.bills);
+          // If a modal bill is currently open, refresh its state
+          if (activeBillModal) {
+            const updated = data.bills.find((b: PartnerBill) => b.id === activeBillModal.id);
+            if (updated) {
+              setActiveBillModal(updated);
+            }
+          }
+        }
+      }
+    } catch {
+      // Background sync fail silent
+    }
+  };
+
+  useEffect(() => {
+    // Initial fetch
+    fetchPendingBills();
+
+    // Poll every 3 seconds for instant status synchronization
+    const interval = setInterval(fetchPendingBills, 3000);
+
+    const unsub = subscribe('partnersChanged', () => {
+      setPartners(StorageService.getApprovedPartners());
+    });
+    const unsubCoin = subscribe('coinAccountChanged', () => {
+      setCoinBalance(StorageService.getCoinAccount(currentUser.id).availableBalance);
+    });
+
+    return () => {
+      clearInterval(interval);
+      unsub();
+      unsubCoin();
+    };
+  }, [currentUser.id, currentUser.mobile]);
+
+  const districts = ['All', ...new Set(partners.map((p) => p.district))];
+
+  const filteredPartners = partners.filter((p) => {
+    const matchesSearch =
+      p.shopName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      p.partnerCode.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      p.pinCode.includes(searchQuery) ||
+      p.address.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesDistrict = selectedDistrict === 'All' || p.district === selectedDistrict;
+    return matchesSearch && matchesDistrict;
+  });
+
+  // Calculate local redemption cap for the active shop calculator
+  const partnerCapPercent = activeShopForPay
+    ? Math.min(50, activeShopForPay.partnerRedemptionCapPercentage || 50)
+    : 50;
+  const maxCapAmount = Math.floor(billAmount * (partnerCapPercent / 100));
+  const maxSpendableCoins = Math.min(coinBalance, maxCapAmount);
+
+  const handleOpenCalculator = (shop: PartnerShop) => {
+    setActiveShopForPay(shop);
+    setBillAmount(500);
+    const initialCoins = Math.min(
+      coinBalance,
+      Math.floor(500 * (Math.min(50, shop.partnerRedemptionCapPercentage || 50) / 100))
+    );
+    setCoinsToRedeem(initialCoins);
+  };
+
+  const handleBillAmountChange = (amount: number) => {
+    setBillAmount(amount);
+    const newMaxCap = Math.floor(amount * (partnerCapPercent / 100));
+    setCoinsToRedeem(Math.min(coinBalance, newMaxCap));
+  };
+
+  // Select Payment Option (Option A: UPI/GPay, Option B: Cash at Store)
+  const handleSelectPaymentMethod = async (bill: PartnerBill, method: 'upi' | 'cash') => {
+    setIsUpdatingPaymentMode(true);
+    setSelectedPaymentMode(method);
+    try {
+      const res = await fetch(`/api/customer/bills/${bill.id}/select-payment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paymentMethod: method, customerId: currentUser.id }),
+      });
+      const data = await res.json();
+      if (data.success && data.bill) {
+        setActiveBillModal(data.bill);
+        fetchPendingBills();
+      }
+    } catch (err: any) {
+      console.error('Error selecting payment:', err);
+    } finally {
+      setIsUpdatingPaymentMode(false);
+    }
+  };
+
+  // Helper to generate UPI URI according to NPCI specifications
+  const getUpiUrl = (bill: PartnerBill) => {
+    const shop = partners.find((p) => p.id === bill.partnerId);
+    const storeUpi = bill.merchantUpiId || shop?.merchantUpiId || 'magizhcafee-3@okhdfcbank';
+    const pn = encodeURIComponent(bill.partnerName || shop?.shopName || 'Magizh Partner');
+    const tr = encodeURIComponent(bill.billNumber.replace(/[^A-Za-z0-9]/g, ''));
+    const tn = encodeURIComponent(`Bill ${bill.billNumber} Magizh`);
+    const am = Number(bill.payableAmount).toFixed(2);
+    return `upi://pay?pa=${encodeURIComponent(storeUpi)}&pn=${pn}&am=${am}&cu=INR&tr=${tr}&tn=${tn}&mc=5411`;
+  };
+
+  // Helper to get QR code image URL
+  const getQrImageUrl = (bill: PartnerBill) => {
+    const upiUri = getUpiUrl(bill);
+    return `https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=10&data=${encodeURIComponent(upiUri)}`;
+  };
+
+  return (
+    <div className="max-w-5xl mx-auto px-3 sm:px-6 py-4 pb-28 space-y-6">
+      {/* Directory Banner Header */}
+      <div className="bg-gradient-to-r from-magizh-900 via-magizh-800 to-darkbrown-900 text-white rounded-3xl p-5 sm:p-7 shadow-card border border-magizh-700/50">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="bg-b5-600 text-white text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider">
+                Authorized Franchise Network
+              </span>
+            </div>
+            <h1 className="text-xl sm:text-2xl font-black mt-1">
+              Magizh Partner Stores
+            </h1>
+            <p className="text-xs text-cream-200 mt-1 max-w-md">
+              Visit approved partner organic grocery stores across Tamil Nadu. Redeem your B5 Coins in-store (up to 50% cap) and pay the rest in cash or UPI.
+            </p>
+          </div>
+
+          <div className="bg-white/10 backdrop-blur-md px-4 py-3 rounded-2xl border border-white/20 text-center shrink-0">
+            <span className="text-[10px] text-cream-200 uppercase font-bold block">Your Available Coins</span>
+            <div className="flex items-center justify-center gap-1.5 mt-0.5">
+              <Coins className="w-5 h-5 text-b5-400" />
+              <span className="text-2xl font-black text-white font-mono">{coinBalance}</span>
+            </div>
+            <span className="text-[10px] text-amber-300 font-bold block">1 B5 Coin = ₹1 Discount</span>
+          </div>
+        </div>
+
+        {/* Search & Filter */}
+        <div className="mt-5 pt-4 border-t border-white/10 grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+          <div className="relative sm:col-span-2">
+            <Search className="w-4 h-4 absolute left-3.5 top-3 text-gray-400" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search partner store by name, area, or PIN code..."
+              className="w-full pl-10 pr-3 py-2 text-xs text-darkbrown-900 bg-white rounded-xl focus:outline-none focus:ring-2 focus:ring-magizh-400"
+            />
+          </div>
+
+          <select
+            value={selectedDistrict}
+            onChange={(e) => setSelectedDistrict(e.target.value)}
+            className="w-full px-3 py-2 text-xs text-darkbrown-900 bg-white rounded-xl focus:outline-none focus:ring-2 focus:ring-magizh-400 font-bold"
+          >
+            {districts.map((d) => (
+              <option key={d} value={d}>
+                {d === 'All' ? 'All Districts' : d}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {/* SECTION 6: PENDING IN-STORE PAYMENT REQUESTS */}
+      {pendingBills.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="relative flex h-3 w-3">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+              </span>
+              <h2 className="text-sm font-black text-darkbrown-900 uppercase tracking-wide">
+                Active Store Billing Requests ({pendingBills.length})
+              </h2>
+            </div>
+            <button
+              onClick={fetchPendingBills}
+              className="text-xs text-magizh-800 font-bold flex items-center gap-1 hover:underline"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Refresh</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3.5">
+            {pendingBills.map((bill) => {
+              const discountPercent =
+                bill.billAmount > 0
+                  ? Math.round((bill.coinsToRedeem / bill.billAmount) * 100)
+                  : 0;
+              const isUpiSelected = bill.status === 'CUSTOMER_SELECTED_UPI';
+              const isCashSelected = bill.status === 'CUSTOMER_SELECTED_CASH';
+
+              return (
+                <div
+                  key={bill.id}
+                  className="bg-white rounded-3xl border-2 border-amber-400/80 shadow-md p-5 space-y-4 transition-all"
+                >
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-cream-200">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-2xl bg-amber-100 text-amber-800 flex items-center justify-center font-black">
+                        <Store className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-black text-base text-darkbrown-900">
+                            {bill.partnerName}
+                          </h3>
+                          <span className="bg-amber-100 text-amber-900 text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider">
+                            Bill #{bill.billNumber}
+                          </span>
+                        </div>
+                        <p className="text-xs text-gray-500">
+                          Cashier generated this bill for your in-store purchase
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-bold px-2.5 py-1 rounded-xl bg-orange-100 text-orange-800 border border-orange-200 flex items-center gap-1">
+                        <Clock className="w-3 h-3 text-orange-600 animate-spin" />
+                        <span>
+                          {isUpiSelected
+                            ? 'UPI Payment Selected'
+                            : isCashSelected
+                            ? 'Cash Payment Selected'
+                            : 'Pending Your Payment'}
+                        </span>
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Bill Financial Breakdown */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 bg-cream-50 p-3.5 rounded-2xl border border-cream-200 text-xs">
+                    <div>
+                      <span className="text-[10px] text-gray-500 uppercase font-bold block">
+                        Original Bill
+                      </span>
+                      <span className="text-sm font-black text-darkbrown-900 font-mono">
+                        ₹{bill.billAmount}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-b5-700 uppercase font-bold block">
+                        Coins Redeemed
+                      </span>
+                      <span className="text-sm font-black text-b5-700 font-mono flex items-center gap-1">
+                        <Coins className="w-3.5 h-3.5" />
+                        {bill.coinsToRedeem} B5
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-gray-500 uppercase font-bold block">
+                        Discount Cap %
+                      </span>
+                      <span className="text-sm font-black text-darkbrown-900 font-mono">
+                        {discountPercent}% OFF
+                      </span>
+                    </div>
+                    <div className="bg-emerald-50 p-2 rounded-xl border border-emerald-200">
+                      <span className="text-[10px] text-emerald-800 uppercase font-black block">
+                        Net Payable
+                      </span>
+                      <span className="text-base font-black text-emerald-800 font-mono">
+                        ₹{bill.payableAmount}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Action Button to Open Payment Modal */}
+                  <div className="flex items-center justify-between pt-1">
+                    <p className="text-xs text-gray-600">
+                      Choose to pay via <strong>GPay / UPI</strong> or <strong>Cash at counter</strong>.
+                    </p>
+                    <button
+                      onClick={() => {
+                        setActiveBillModal(bill);
+                        setSelectedPaymentMode(
+                          isUpiSelected ? 'upi' : isCashSelected ? 'cash' : null
+                        );
+                      }}
+                      className="px-5 py-2.5 bg-gradient-to-r from-magizh-800 to-magizh-900 hover:from-magizh-900 hover:to-black text-white text-xs font-black rounded-xl shadow-md transition-all flex items-center gap-2"
+                    >
+                      <CreditCard className="w-4 h-4 text-b5-400" />
+                      <span>Proceed to Pay (₹{bill.payableAmount})</span>
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* SECTION 7: CUSTOMER PAYMENT OPTIONS MODAL (GPAY / UPI vs CASH AT STORE) */}
+      {activeBillModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-darkbrown-950/75 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white rounded-3xl shadow-2xl border border-cream-300 w-full max-w-xl max-h-[90vh] overflow-y-auto animate-in zoom-in-95">
+            {/* Modal Header */}
+            <div className="bg-gradient-to-r from-magizh-900 via-magizh-800 to-darkbrown-900 text-white p-5 sticky top-0 z-10">
+              <button
+                onClick={() => setActiveBillModal(null)}
+                className="absolute top-4 right-4 text-cream-200 hover:text-white p-1 rounded-full hover:bg-white/10"
+              >
+                <X className="w-5 h-5" />
+              </button>
+              <div className="flex items-center gap-2">
+                <Store className="w-4 h-4 text-b5-400" />
+                <span className="text-[10px] font-bold uppercase tracking-wider text-b5-300">
+                  Store Counter Checkout
+                </span>
+              </div>
+              <h3 className="text-lg font-black mt-0.5">{activeBillModal.partnerName}</h3>
+              <p className="text-xs text-cream-200">
+                Bill #{activeBillModal.billNumber} &bull; Net Payable: ₹{activeBillModal.payableAmount}
+              </p>
+            </div>
+
+            <div className="p-5 space-y-5">
+              {/* Bill Details Summary Card */}
+              <div className="bg-cream-50 p-4 rounded-2xl border border-cream-200 space-y-2 text-xs">
+                <div className="flex justify-between text-gray-600">
+                  <span>Store Name:</span>
+                  <span className="font-bold text-darkbrown-900">{activeBillModal.partnerName}</span>
+                </div>
+                <div className="flex justify-between text-gray-600">
+                  <span>Bill Reference Number:</span>
+                  <span className="font-mono font-bold text-darkbrown-900">{activeBillModal.billNumber}</span>
+                </div>
+                <div className="flex justify-between text-gray-600">
+                  <span>Original Purchase Amount:</span>
+                  <span className="font-mono font-bold text-darkbrown-900">₹{activeBillModal.billAmount}</span>
+                </div>
+                <div className="flex justify-between text-b5-800 font-bold">
+                  <span>B5 Coins Redeemed (1 B5 = ₹1):</span>
+                  <span className="font-mono">-₹{activeBillModal.coinsToRedeem} ({activeBillModal.coinsToRedeem} Coins)</span>
+                </div>
+                <div className="flex justify-between text-gray-600">
+                  <span>Discount Applied:</span>
+                  <span className="font-bold text-emerald-700">
+                    {Math.round((activeBillModal.coinsToRedeem / activeBillModal.billAmount) * 100)}% Discount
+                  </span>
+                </div>
+                <div className="flex justify-between text-base font-black text-magizh-900 pt-2 border-t border-cream-300">
+                  <span>Remaining Payable Amount:</span>
+                  <span className="text-lg text-emerald-800 font-mono">₹{activeBillModal.payableAmount}</span>
+                </div>
+              </div>
+
+              {/* Payment Selection Tab Options (Option A vs Option B) */}
+              <div className="space-y-3">
+                <label className="block text-xs font-black text-darkbrown-900 uppercase tracking-wider">
+                  Select Payment Method:
+                </label>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => handleSelectPaymentMethod(activeBillModal, 'upi')}
+                    disabled={isUpdatingPaymentMode}
+                    className={`p-3.5 rounded-2xl border-2 text-left transition-all flex flex-col justify-between gap-2 ${
+                      selectedPaymentMode === 'upi' || activeBillModal.status === 'CUSTOMER_SELECTED_UPI'
+                        ? 'border-magizh-700 bg-magizh-50 shadow-sm'
+                        : 'border-cream-300 hover:border-magizh-400 bg-white'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between w-full">
+                      <Smartphone className="w-5 h-5 text-magizh-800" />
+                      <span className="text-[10px] font-black uppercase text-magizh-800 bg-magizh-100 px-2 py-0.5 rounded-full">
+                        Instant
+                      </span>
+                    </div>
+                    <div>
+                      <div className="text-xs font-black text-darkbrown-900">
+                        Option A: GPay / UPI
+                      </div>
+                      <div className="text-[10px] text-gray-500">
+                        Pay to Store's Registered UPI
+                      </div>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleSelectPaymentMethod(activeBillModal, 'cash')}
+                    disabled={isUpdatingPaymentMode}
+                    className={`p-3.5 rounded-2xl border-2 text-left transition-all flex flex-col justify-between gap-2 ${
+                      selectedPaymentMode === 'cash' || activeBillModal.status === 'CUSTOMER_SELECTED_CASH'
+                        ? 'border-emerald-700 bg-emerald-50 shadow-sm'
+                        : 'border-cream-300 hover:border-emerald-400 bg-white'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between w-full">
+                      <Banknote className="w-5 h-5 text-emerald-700" />
+                      <span className="text-[10px] font-black uppercase text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full">
+                        Counter
+                      </span>
+                    </div>
+                    <div>
+                      <div className="text-xs font-black text-darkbrown-900">
+                        Option B: Cash at Store
+                      </div>
+                      <div className="text-[10px] text-gray-500">
+                        Pay cash directly to cashier
+                      </div>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {/* PAYMENT OPTION A: GPAY / UPI DETAILS */}
+              {(selectedPaymentMode === 'upi' || activeBillModal.status === 'CUSTOMER_SELECTED_UPI') && (
+                <div className="p-4 bg-gradient-to-br from-blue-50/70 to-indigo-50/70 rounded-2xl border border-blue-200 space-y-4 animate-in fade-in">
+                  <div className="flex items-center gap-2">
+                    <QrCode className="w-5 h-5 text-blue-700" />
+                    <h4 className="text-xs font-black text-blue-900 uppercase tracking-wider">
+                      Option A: GPay / UPI Dynamic QR &amp; Direct Pay
+                    </h4>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row items-center gap-4 bg-white p-4 rounded-xl border border-blue-100 shadow-2xs">
+                    {/* Dynamic QR Code */}
+                    <div className="shrink-0 text-center">
+                      <img
+                        src={getQrImageUrl(activeBillModal)}
+                        alt="Store UPI QR Code"
+                        className="w-36 h-36 rounded-lg border border-gray-200 mx-auto shadow-xs"
+                      />
+                      <span className="text-[9px] text-gray-500 font-bold block mt-1">
+                        Scan with GPay / PhonePe / Paytm
+                      </span>
+                    </div>
+
+                    {/* Store UPI Details */}
+                    <div className="space-y-2 text-xs flex-1 w-full">
+                      <div>
+                        <span className="text-[10px] text-gray-500 uppercase font-bold block">
+                          Store's Registered UPI ID
+                        </span>
+                        <span className="font-mono font-black text-sm text-blue-950 bg-blue-50 px-2.5 py-1 rounded-lg inline-block border border-blue-200 select-all">
+                          {activeBillModal.merchantUpiId || 'magizhcafee-3@okhdfcbank'}
+                        </span>
+                      </div>
+
+                      <div>
+                        <span className="text-[10px] text-gray-500 uppercase font-bold block">
+                          Prefilled Payable Amount
+                        </span>
+                        <span className="text-lg font-black text-emerald-800 font-mono">
+                          ₹{Number(activeBillModal.payableAmount).toFixed(2)}
+                        </span>
+                      </div>
+
+                      {/* Direct GPay / UPI App Button */}
+                      <a
+                        href={getUpiUrl(activeBillModal)}
+                        className="w-full py-2.5 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-2 transition-all"
+                      >
+                        <Smartphone className="w-4 h-4" />
+                        <span>Open GPay / Any UPI App</span>
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      </a>
+                    </div>
+                  </div>
+
+                  {/* Customer Instruction */}
+                  <div className="p-3 bg-blue-100/60 rounded-xl border border-blue-200 text-xs text-blue-950 space-y-1">
+                    <p className="font-bold">Instructions for Customer:</p>
+                    <p className="text-[11px] text-blue-900 leading-relaxed">
+                      1. Pay using the QR code or GPay button above with prefilled amount ₹{activeBillModal.payableAmount}.<br />
+                      2. After payment, show the transaction confirmation to the store cashier.<br />
+                      3. Cashier will verify the bank receipt and approve your bill.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* PAYMENT OPTION B: CASH AT THE STORE */}
+              {(selectedPaymentMode === 'cash' || activeBillModal.status === 'CUSTOMER_SELECTED_CASH') && (
+                <div className="p-4 bg-gradient-to-br from-emerald-50/70 to-teal-50/70 rounded-2xl border border-emerald-200 space-y-3 animate-in fade-in">
+                  <div className="flex items-center gap-2">
+                    <Banknote className="w-5 h-5 text-emerald-700" />
+                    <h4 className="text-xs font-black text-emerald-900 uppercase tracking-wider">
+                      Option B: Cash Payment at Store Counter
+                    </h4>
+                  </div>
+
+                  <div className="bg-white p-4 rounded-xl border border-emerald-100 space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs text-gray-600 font-medium">Exact Cash to Hand Over:</span>
+                      <span className="text-xl font-black text-emerald-800 font-mono">
+                        ₹{activeBillModal.payableAmount}
+                      </span>
+                    </div>
+
+                    <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200 text-xs text-emerald-950 space-y-1">
+                      <p className="font-bold">Instructions for Customer:</p>
+                      <p className="text-[11px] text-emerald-900">
+                        Please pay <strong>₹{activeBillModal.payableAmount}</strong> in cash at the counter. The cashier will verify the cash received and approve the bill.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Waiting Status Alert */}
+              <div className="p-3.5 bg-amber-50 rounded-2xl border border-amber-200 text-xs text-amber-900 flex items-center gap-3">
+                <Clock className="w-5 h-5 text-amber-600 shrink-0 animate-spin" />
+                <div>
+                  <span className="font-black block">Waiting for Partner Cashier Verification</span>
+                  <span className="text-[11px] text-amber-800">
+                    Once the cashier confirms payment, your bill will automatically complete, {activeBillModal.coinsToRedeem} B5 Coins will be deducted, and your official receipt will be generated.
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveBillModal(null)}
+                  className="px-4 py-2 border border-gray-300 hover:bg-gray-100 text-gray-700 rounded-xl text-xs font-bold"
+                >
+                  Close Window
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SECTION 9: CELEBRATION RECEIPT MODAL (WHEN COMPLETED) */}
+      {completedBillReceipt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-darkbrown-950/75 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white rounded-3xl shadow-2xl border border-cream-300 w-full max-w-md overflow-hidden animate-in zoom-in-95">
+            <div className="bg-gradient-to-r from-emerald-800 to-emerald-950 text-white p-6 text-center space-y-2">
+              <div className="w-14 h-14 rounded-full bg-white/20 text-white flex items-center justify-center mx-auto shadow-md">
+                <CheckCircle2 className="w-8 h-8 text-emerald-300" />
+              </div>
+              <h3 className="text-xl font-black">Payment Confirmed!</h3>
+              <p className="text-xs text-emerald-100">
+                Receipt Issued &bull; B5 Coins Deducted Atomically
+              </p>
+            </div>
+
+            <div className="p-6 space-y-4 text-xs">
+              <div className="bg-cream-50 p-4 rounded-2xl border border-cream-200 space-y-2">
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Receipt Number:</span>
+                  <span className="font-mono font-black text-darkbrown-900">
+                    {completedBillReceipt.receiptNumber}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Store Name:</span>
+                  <span className="font-bold text-darkbrown-900">
+                    {completedBillReceipt.partnerName}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Bill Number:</span>
+                  <span className="font-mono">{completedBillReceipt.billNumber}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Original Bill:</span>
+                  <span className="font-bold">₹{completedBillReceipt.billAmount}</span>
+                </div>
+                <div className="flex justify-between text-b5-700 font-black">
+                  <span>B5 Coins Used:</span>
+                  <span>-₹{completedBillReceipt.coinsToRedeem} ({completedBillReceipt.coinsToRedeem} Coins)</span>
+                </div>
+                <div className="flex justify-between text-emerald-800 font-black pt-2 border-t border-cream-300">
+                  <span>Amount Paid:</span>
+                  <span className="text-sm font-mono">₹{completedBillReceipt.payableAmount}</span>
+                </div>
+                <div className="flex justify-between text-gray-500">
+                  <span>Payment Method:</span>
+                  <span className="font-bold uppercase">{completedBillReceipt.paymentMethod || 'UPI'}</span>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setCompletedBillReceipt(null)}
+                className="w-full py-2.5 bg-magizh-800 hover:bg-magizh-900 text-white rounded-xl font-bold"
+              >
+                Close Receipt
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Partner Shops List */}
+      <div className="space-y-4">
+        <div className="flex justify-between items-center px-1">
+          <h2 className="text-sm font-extrabold text-darkbrown-900">
+            Approved Stores Near You ({filteredPartners.length})
+          </h2>
+          <button
+            onClick={onBackToShopping}
+            className="text-xs font-bold text-magizh-800 hover:underline"
+          >
+            &larr; Return to Online Shopping
+          </button>
+        </div>
+
+        {filteredPartners.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-cream-300 p-8 text-center text-xs text-gray-500">
+            No partner shops found matching your search.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {filteredPartners.map((shop) => (
+              <div
+                key={shop.id}
+                className="bg-white rounded-3xl border border-cream-300 hover:border-magizh-500/50 p-5 shadow-2xs hover:shadow-soft transition-all space-y-3 flex flex-col justify-between"
+              >
+                <div>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-900 flex items-center justify-center font-bold shrink-0">
+                        <Store className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h3 className="font-extrabold text-sm text-darkbrown-900 leading-tight">
+                          {shop.shopName}
+                        </h3>
+                        <span className="font-mono text-[10px] text-gray-500 font-bold">
+                          Partner ID: {shop.partnerCode}
+                        </span>
+                      </div>
+                    </div>
+                    <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0">
+                      Approved Store
+                    </span>
+                  </div>
+
+                  <p className="text-xs text-gray-600 mt-2 flex items-start gap-1.5">
+                    <MapPin className="w-4 h-4 text-magizh-700 shrink-0 mt-0.5" />
+                    <span>{shop.address}, {shop.district} - <strong>{shop.pinCode}</strong></span>
+                  </p>
+
+                  <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
+                    <span className="bg-b5-50 text-b5-800 border border-b5-200 px-2 py-0.5 rounded-lg font-bold">
+                      Redeem up to {shop.partnerRedemptionCapPercentage || 50}% Coins
+                    </span>
+                    <span className="bg-amber-50 text-amber-900 border border-amber-200 px-2 py-0.5 rounded-lg font-bold flex items-center gap-1">
+                      <Sparkles className="w-3 h-3 text-amber-600" />
+                      {shop.specialCoinBonusMultiplier || 1.5}x Coin Bonus
+                    </span>
+                  </div>
+                </div>
+
+                <div className="pt-3 border-t border-cream-200 flex items-center justify-between gap-3">
+                  <div className="text-[11px] text-gray-500 flex items-center gap-1">
+                    <Phone className="w-3.5 h-3.5 text-gray-400" />
+                    <span>+91 {shop.mobile}</span>
+                  </div>
+
+                  <button
+                    onClick={() => handleOpenCalculator(shop)}
+                    className="px-4 py-2 bg-gradient-to-r from-b5-600 to-b5-700 hover:from-b5-700 hover:to-b5-800 text-white rounded-xl text-xs font-black shadow-sm transition-all flex items-center gap-1.5"
+                  >
+                    <Coins className="w-3.5 h-3.5" />
+                    <span>Coin Calculator</span>
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* In-Store Coin Calculator Modal */}
+      {activeShopForPay && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-darkbrown-950/70 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white rounded-3xl shadow-2xl border border-cream-300 w-full max-w-lg overflow-hidden animate-in zoom-in-95">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-magizh-900 to-magizh-800 text-white p-5 relative">
+              <button
+                onClick={() => setActiveShopForPay(null)}
+                className="absolute top-4 right-4 text-cream-200 hover:text-white p-1 rounded-full hover:bg-white/10"
+              >
+                <X className="w-5 h-5" />
+              </button>
+              <div className="flex items-center gap-2">
+                <Store className="w-4 h-4 text-b5-400" />
+                <span className="text-[10px] font-bold uppercase tracking-wider text-b5-300">
+                  Store Coin Discount Calculator
+                </span>
+              </div>
+              <h3 className="text-lg font-black mt-1">{activeShopForPay.shopName}</h3>
+              <p className="text-xs text-cream-200">
+                Partner Code: {activeShopForPay.partnerCode} &bull; {activeShopForPay.district}
+              </p>
+            </div>
+
+            <div className="p-5 space-y-4 text-xs">
+              <div>
+                <label className="block font-bold text-darkbrown-900 mb-1">
+                  Estimated Purchase Amount (₹)
+                </label>
+                <input
+                  type="number"
+                  min={10}
+                  value={billAmount}
+                  onChange={(e) => handleBillAmountChange(Math.max(1, Number(e.target.value)))}
+                  className="w-full p-2.5 border border-cream-300 rounded-xl text-base font-black font-mono focus:ring-2 focus:ring-magizh-600 focus:outline-none"
+                  required
+                />
+              </div>
+
+              {/* Cap Details Card */}
+              <div className="bg-gradient-to-br from-b5-50 to-amber-50 p-3.5 rounded-2xl border border-b5-200 space-y-2">
+                <div className="flex justify-between items-center text-[11px]">
+                  <span className="text-gray-600">Store Redemption Cap:</span>
+                  <span className="font-extrabold text-b5-900 font-mono">{partnerCapPercent}% Maximum</span>
+                </div>
+                <div className="flex justify-between items-center text-[11px]">
+                  <span className="text-gray-600">Maximum Coins Permitted (Cap Limit):</span>
+                  <span className="font-black text-darkbrown-900 font-mono">₹{maxCapAmount}</span>
+                </div>
+                <div className="flex justify-between items-center text-[11px] pt-1 border-t border-b5-200/60">
+                  <span className="font-bold text-darkbrown-900">Your Spendable Coin Limit:</span>
+                  <span className="font-black text-emerald-800 font-mono">
+                    {maxSpendableCoins} B5 Coins (= ₹{maxSpendableCoins})
+                  </span>
+                </div>
+              </div>
+
+              {/* Coin Slider */}
+              {maxSpendableCoins > 0 ? (
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="font-bold text-darkbrown-900">Coins to Redeem:</span>
+                    <span className="font-black text-b5-700 font-mono text-sm">
+                      {coinsToRedeem} B5
+                    </span>
+                  </div>
+
+                  <input
+                    type="range"
+                    min={0}
+                    max={maxSpendableCoins}
+                    value={coinsToRedeem}
+                    onChange={(e) => setCoinsToRedeem(Number(e.target.value))}
+                    className="w-full accent-b5-600 cursor-pointer"
+                  />
+
+                  <div className="flex justify-between text-[11px] text-gray-500 font-mono">
+                    <span>0 Coins</span>
+                    <button
+                      type="button"
+                      onClick={() => setCoinsToRedeem(maxSpendableCoins)}
+                      className="text-b5-700 font-bold hover:underline"
+                    >
+                      Use Max ({maxSpendableCoins})
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-[11px] text-amber-800 bg-amber-50 p-2.5 rounded-xl border border-amber-200">
+                  You have 0 B5 Coins available to redeem for this purchase.
+                </p>
+              )}
+
+              {/* Final Bill Breakdown */}
+              <div className="p-3 bg-cream-50 rounded-2xl border border-cream-200 space-y-1.5">
+                <div className="flex justify-between text-gray-600">
+                  <span>Purchase Subtotal:</span>
+                  <span>₹{billAmount}</span>
+                </div>
+                <div className="flex justify-between text-b5-700 font-bold">
+                  <span>B5 Coins Discount:</span>
+                  <span>-₹{coinsToRedeem}</span>
+                </div>
+                <div className="flex justify-between text-sm font-black text-magizh-900 pt-1 border-t border-cream-300">
+                  <span>Remaining Amount to Pay at Counter:</span>
+                  <span>₹{Math.max(0, billAmount - coinsToRedeem)}</span>
+                </div>
+              </div>
+
+              <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl text-amber-900">
+                <p className="font-bold text-[11px]">How In-Store Billing Works:</p>
+                <p className="text-[10px] text-amber-800 mt-0.5">
+                  Give your mobile number or Customer ID to the store cashier. The cashier will generate the bill with your coin discount. It will instantly appear here for your confirmation and payment.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setActiveShopForPay(null)}
+                className="w-full py-2.5 bg-magizh-800 hover:bg-magizh-900 text-white rounded-xl text-xs font-bold transition-all"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};

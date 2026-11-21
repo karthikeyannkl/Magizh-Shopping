@@ -22,6 +22,7 @@ import {
   CreditCard,
   XCircle,
   Loader2,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { StorageService, subscribe } from '../../services/storage';
 import { PartnerShop, PartnerBill, User } from '../../types';
@@ -56,6 +57,7 @@ export const PartnerShopsDirectory: React.FC<PartnerShopsDirectoryProps> = ({ on
 
   // Store View Modal & Purchase History State
   const [selectedStoreModal, setSelectedStoreModal] = useState<PartnerShop | null>(null);
+  const [activeStoreImageIdx, setActiveStoreImageIdx] = useState(0);
   const [directoryViewMode, setDirectoryViewMode] = useState<'shops' | 'history'>('shops');
   const [pastBills, setPastBills] = useState<PartnerBill[]>([]);
 
@@ -1159,16 +1161,56 @@ export const PartnerShopsDirectory: React.FC<PartnerShopsDirectoryProps> = ({ on
             </div>
 
             <div className="p-5 space-y-4 text-xs">
-              {/* Store Photo / Showcase Banner */}
-              <div className="relative rounded-2xl overflow-hidden bg-gradient-to-br from-emerald-900 to-darkbrown-900 h-36 flex items-center justify-center text-white border border-cream-300 shadow-inner">
-                <div className="text-center space-y-1">
-                  <div className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center mx-auto shadow-md">
-                    <Store className="w-6 h-6 text-emerald-300" />
+              {/* Store Photo / 4-Image Showcase Gallery */}
+              {selectedStoreModal.storeImages && selectedStoreModal.storeImages.filter(Boolean).length > 0 ? (
+                <div className="space-y-2">
+                  <div className="relative rounded-2xl overflow-hidden bg-black h-48 sm:h-56 w-full border border-cream-300 shadow-md">
+                    <img
+                      src={selectedStoreModal.storeImages[activeStoreImageIdx] || selectedStoreModal.storeImages[0]}
+                      alt={`${selectedStoreModal.shopName} Photo`}
+                      className="w-full h-full object-cover"
+                    />
+                    <div className="absolute top-2.5 right-2.5 bg-black/70 backdrop-blur-md text-white text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 shadow-md">
+                      <ImageIcon className="w-3 h-3 text-amber-300" />
+                      <span>{activeStoreImageIdx + 1} / {selectedStoreModal.storeImages.filter(Boolean).length}</span>
+                    </div>
                   </div>
-                  <h4 className="font-extrabold text-sm">{selectedStoreModal.shopName}</h4>
-                  <p className="text-[11px] text-cream-200">Traditional Organic Millets, Oils &amp; Authentic Groceries</p>
+
+                  {/* Thumbnails row (Up to 4 images) */}
+                  {selectedStoreModal.storeImages.filter(Boolean).length > 1 && (
+                    <div className="grid grid-cols-4 gap-2">
+                      {selectedStoreModal.storeImages.filter(Boolean).map((imgUrl, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => setActiveStoreImageIdx(idx)}
+                          className={`relative h-14 rounded-xl overflow-hidden border-2 transition-all cursor-pointer ${
+                            activeStoreImageIdx === idx
+                              ? 'border-emerald-600 ring-2 ring-emerald-300 shadow-sm'
+                              : 'border-cream-300 opacity-70 hover:opacity-100'
+                          }`}
+                        >
+                          <img
+                            src={imgUrl}
+                            alt={`Thumbnail ${idx + 1}`}
+                            className="w-full h-full object-cover"
+                          />
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              </div>
+              ) : (
+                <div className="relative rounded-2xl overflow-hidden bg-gradient-to-br from-emerald-900 to-darkbrown-900 h-36 flex items-center justify-center text-white border border-cream-300 shadow-inner">
+                  <div className="text-center space-y-1">
+                    <div className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center mx-auto shadow-md">
+                      <Store className="w-6 h-6 text-emerald-300" />
+                    </div>
+                    <h4 className="font-extrabold text-sm">{selectedStoreModal.shopName}</h4>
+                    <p className="text-[11px] text-cream-200">Traditional Organic Millets, Oils &amp; Authentic Groceries</p>
+                  </div>
+                </div>
+              )}
 
               {/* Store Address & Contact */}
               <div className="bg-cream-50 p-4 rounded-2xl border border-cream-200 space-y-2.5">

@@ -345,6 +345,7 @@ function migrateSchema() {
     { name: 'application_status', type: "TEXT DEFAULT 'pending'" },
     { name: 'rejection_reason', type: 'TEXT' },
     { name: 'store_category', type: "TEXT DEFAULT 'Organic Groceries'" },
+    { name: 'store_images_json', type: "TEXT DEFAULT '[]'" },
   ];
 
   try {
@@ -504,6 +505,8 @@ function migrateSchema() {
     db.run("UPDATE partner_shops SET merchant_upi_id = 'salemherbal@okhdfcbank', city = 'Salem' WHERE id = 'ptr-3' AND (merchant_upi_id IS NULL OR merchant_upi_id = '')");
     // Synchronize partner_shops status and application_status so approved shops are never blocked
     db.run("UPDATE partner_shops SET application_status = status WHERE status = 'approved' AND (application_status IS NULL OR application_status != 'approved')");
+    // Standardize all historical redemptions/debits in coin_ledger as 'debit'
+    db.run("UPDATE coin_ledger SET type = 'debit' WHERE type LIKE '%redemption%' OR type LIKE '%deduct%' OR type LIKE '%spent%'");
   } catch {}
 }
 
@@ -2081,6 +2084,11 @@ export const dbService = {
     if (settings.address !== undefined && String(settings.address).trim()) {
       partner.address = String(settings.address).trim();
     }
+    if (settings.storeImages !== undefined && Array.isArray(settings.storeImages)) {
+      const validImages = settings.storeImages.slice(0, 4);
+      partner.storeImages = validImages;
+      db.run("UPDATE partner_shops SET store_images_json = ? WHERE id = ?", [JSON.stringify(validImages), partner.id]);
+    }
 
     db.run(
       `UPDATE partner_shops SET
@@ -2100,6 +2108,15 @@ export const dbService = {
       ]
     );
 
+    persistDatabase();
+    return this.getPartnerById(partner.id);
+  },
+
+  updatePartnerStoreImages(partnerId, storeImages) {
+    const partner = this.getPartnerById(partnerId);
+    if (!partner) throw new Error('Partner shop not found.');
+    const validImages = Array.isArray(storeImages) ? storeImages.slice(0, 4) : [];
+    db.run("UPDATE partner_shops SET store_images_json = ? WHERE id = ?", [JSON.stringify(validImages), partner.id]);
     persistDatabase();
     return this.getPartnerById(partner.id);
   },
@@ -2143,7 +2160,7 @@ export const dbService = {
         customerId: bill.customerId,
         orderId: bill.billNumber,
         orderNumber: bill.billNumber,
-        type: 'partner_in_store_redemption',
+        type: 'debit',
         amount: bill.coinsToRedeem,
         reason: `In-store purchase at ${bill.partnerName} (Bill #${bill.billNumber})`,
         balanceAfter: newBalance,
@@ -2319,7 +2336,7 @@ export const dbService = {
           customerId: bill.customerId,
           orderId: bill.billNumber,
           orderNumber: bill.billNumber,
-          type: 'partner_in_store_redemption',
+          type: 'debit',
           amount: bill.coinsToRedeem,
           reason: `In-store purchase at ${bill.partnerName} (Bill #${bill.billNumber})`,
           balanceAfter: newBalance,
@@ -2938,6 +2955,7 @@ function mapPartnerRow(cols, row) {
     status: row[cols.indexOf('status')],
     merchantUpiId: cols.indexOf('merchant_upi_id') !== -1 && row[cols.indexOf('merchant_upi_id')] ? row[cols.indexOf('merchant_upi_id')] : 'magizhcafee-3@okhdfcbank',
     storeCategory: cols.indexOf('store_category') !== -1 && row[cols.indexOf('store_category')] ? row[cols.indexOf('store_category')] : 'Organic Groceries',
+    storeImages: cols.indexOf('store_images_json') !== -1 && row[cols.indexOf('store_images_json')] ? JSON.parse(row[cols.indexOf('store_images_json')] || '[]') : [],
     gstNumber: cols.indexOf('gst_number') !== -1 ? row[cols.indexOf('gst_number')] : null,
     documents: cols.indexOf('documents_json') !== -1 ? JSON.parse(row[cols.indexOf('documents_json')] || '[]') : [],
     passwordHash: cols.indexOf('password_hash') !== -1 ? row[cols.indexOf('password_hash')] : null,

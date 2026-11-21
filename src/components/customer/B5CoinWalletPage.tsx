@@ -161,24 +161,20 @@ export const B5CoinWalletPage: React.FC<B5CoinWalletPageProps> = ({
   };
 
   const getTxTypeInfo = (type: any) => {
-    switch (type) {
-      case 'credit':
-      case 'manual_credit':
-      case 'referral_bonus':
-      case 'reward_credit':
-      case 'partner_reward':
-      case 'order_reward':
-        return { label: 'Credit', icon: ArrowDownLeft, color: 'text-emerald-700 bg-emerald-50 border-emerald-200' };
-      case 'debit':
-      case 'partner_redemption':
-        return { label: 'Redeemed', icon: ArrowUpRight, color: 'text-rose-700 bg-rose-50 border-rose-200' };
-      case 'reversal':
-        return { label: 'Reversal', icon: RotateCcw, color: 'text-purple-700 bg-purple-50 border-purple-200' };
-      case 'pending':
-        return { label: 'Pending', icon: Clock, color: 'text-amber-700 bg-amber-50 border-amber-200' };
-      default:
-        return { label: 'Txn', icon: Coins, color: 'text-gray-700 bg-gray-50 border-gray-200' };
+    const t = String(type || '').toLowerCase();
+    if (t.includes('credit') || t.includes('reward') || t.includes('bonus')) {
+      return { label: 'Credit', icon: ArrowDownLeft, color: 'text-emerald-700 bg-emerald-50 border-emerald-200' };
     }
+    if (t.includes('debit') || t.includes('redemption') || t.includes('redeem') || t.includes('deduct') || t.includes('spent') || t.includes('discount')) {
+      return { label: 'Redeemed', icon: ArrowUpRight, color: 'text-rose-700 bg-rose-50 border-rose-200' };
+    }
+    if (t.includes('reversal')) {
+      return { label: 'Reversal', icon: RotateCcw, color: 'text-purple-700 bg-purple-50 border-purple-200' };
+    }
+    if (t.includes('pending')) {
+      return { label: 'Pending', icon: Clock, color: 'text-amber-700 bg-amber-50 border-amber-200' };
+    }
+    return { label: 'Debit', icon: ArrowUpRight, color: 'text-rose-700 bg-rose-50 border-rose-200' };
   };
 
   return (
@@ -349,12 +345,19 @@ export const B5CoinWalletPage: React.FC<B5CoinWalletPageProps> = ({
                 const info = getTxTypeInfo(tx.type);
                 const Icon = info.icon;
                 const typeStr = String(tx.type || '').toLowerCase();
+                const isDebit =
+                  typeStr.includes('debit') ||
+                  typeStr.includes('redemption') ||
+                  typeStr.includes('redeem') ||
+                  typeStr.includes('deduct') ||
+                  typeStr.includes('spent') ||
+                  typeStr.includes('discount');
                 const isPositive =
-                  typeStr.includes('credit') ||
-                  typeStr.includes('reward') ||
-                  typeStr.includes('bonus') ||
-                  typeStr === 'reversal' ||
-                  (typeStr !== 'debit' && typeStr !== 'partner_redemption' && tx.amount > 0);
+                  !isDebit &&
+                  (typeStr.includes('credit') ||
+                    typeStr.includes('reward') ||
+                    typeStr.includes('bonus') ||
+                    typeStr === 'reversal');
 
                 return (
                   <div
@@ -394,7 +397,7 @@ export const B5CoinWalletPage: React.FC<B5CoinWalletPageProps> = ({
                           isPositive ? 'text-emerald-700' : 'text-rose-600'
                         }`}
                       >
-                        {isPositive ? '+' : '-'}{tx.amount} B5
+                        {isPositive ? '+' : '-'}{Math.abs(Number(tx.amount) || 0)} B5
                       </span>
                       <span className="text-[10px] text-gray-500 font-mono">
                         Bal: {tx.balanceAfter}

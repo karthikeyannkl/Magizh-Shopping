@@ -307,6 +307,7 @@ export interface PartnerShop {
   totalCommissionPaid: number;
   unsettledAmount: number;
   storeCategory?: string;
+  storeImages?: string[];
 }
 
 export type PartnerBillStatus =

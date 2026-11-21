@@ -33,6 +33,10 @@ import {
   Send,
   AlertCircle,
   Menu,
+  Upload,
+  Trash2,
+  Image as ImageIcon,
+  Save,
 } from 'lucide-react';
 import { StorageService, subscribe } from '../../services/storage';
 import { PartnerShop, Order, Product, User, PartnerLocalTransaction, PartnerBill } from '../../types';
@@ -141,6 +145,90 @@ export const PartnerDashboard: React.FC = () => {
   const [settingsSuccess, setSettingsSuccess] = useState<string | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
 
+  // Store Showcase Images (Up to 4 images with preview, replace, delete)
+  const [storeImages, setStoreImages] = useState<string[]>(() => {
+    return Array.isArray(activePartner?.storeImages) ? activePartner.storeImages.slice(0, 4) : [];
+  });
+  const [isSavingImages, setIsSavingImages] = useState(false);
+  const [imageNotice, setImageNotice] = useState<string | null>(null);
+
+  const handleStoreImageUpload = (slotIndex: number, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 8 * 1024 * 1024) {
+      alert('Image file size exceeds 8 MB. Please select a smaller photo.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (loadEvent) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+        const maxDim = 1200;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.88);
+          setStoreImages((prev) => {
+            const next = [...prev];
+            next[slotIndex] = compressedDataUrl;
+            return next.slice(0, 4);
+          });
+        }
+      };
+      img.src = loadEvent.target?.result as string;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemoveStoreImage = (index: number) => {
+    setStoreImages((prev) => {
+      const next = prev.filter((_, i) => i !== index);
+      return next;
+    });
+  };
+
+  const handleSaveStoreImagesNow = async () => {
+    if (!activePartner || !activePartner.id) return;
+    setIsSavingImages(true);
+    setImageNotice(null);
+    try {
+      const res = await fetch(`/api/partners/${encodeURIComponent(activePartner.id)}/store-images`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ images: storeImages }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setActivePartner(data.partner);
+        StorageService.setActivePartner(data.partner);
+        setImageNotice('Store showcase images updated & saved to database successfully!');
+        setTimeout(() => setImageNotice(null), 4000);
+      } else {
+        alert(data.error || 'Failed to save store images.');
+      }
+    } catch (err: any) {
+      alert(err.message || 'Network error saving store images.');
+    } finally {
+      setIsSavingImages(false);
+    }
+  };
+
   // History Filter
   const [historyFilter, setHistoryFilter] = useState<'all' | 'completed' | 'pending' | 'cancelled' | 'upi' | 'cash'>('all');
 
@@ -181,6 +269,9 @@ export const PartnerDashboard: React.FC = () => {
               setUpiInput(match.merchantUpiId || 'magizhcafee-3@okhdfcbank');
               setDiscountCapInput(match.partnerRedemptionCapPercentage || 50);
               setStoreCategoryInput(match.storeCategory || 'Organic Groceries');
+              if (Array.isArray(match.storeImages)) {
+                setStoreImages(match.storeImages.slice(0, 4));
+              }
             }
           }
         }
@@ -494,6 +585,7 @@ export const PartnerDashboard: React.FC = () => {
           storeCategory: storeCategoryInput.trim(),
           shopName: shopNameInput.trim(),
           address: shopAddressInput.trim(),
+          storeImages: storeImages,
         }),
       });
 
@@ -1816,6 +1908,120 @@ export const PartnerDashboard: React.FC = () => {
                   className="w-full px-3 py-2 bg-cream-50 border border-cream-300 rounded-xl text-xs text-darkbrown-900 focus:outline-none focus:ring-2 focus:ring-blue-700 font-semibold"
                   required
                 />
+              </div>
+            </div>
+
+            {/* PARTNER STORE SHOWCASE IMAGES (UP TO 4 PHOTOS) */}
+            <div className="bg-gradient-to-br from-amber-50/70 via-cream-50/80 to-emerald-50/50 border-2 border-amber-200 rounded-2xl p-4 sm:p-5 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-amber-200/60 pb-3">
+                <div>
+                  <h3 className="text-sm font-black text-darkbrown-900 flex items-center gap-2">
+                    <ImageIcon className="w-4 h-4 text-amber-700" />
+                    <span>Store Showcase Photos (Up to 4 Images)</span>
+                  </h3>
+                  <p className="text-xs text-gray-600 mt-0.5">
+                    Upload photos of your storefront, aisles, counter, and organic products. Customers will see these in "View Store Details".
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-mono font-bold bg-amber-100 text-amber-900 px-2.5 py-1 rounded-full">
+                    {storeImages.filter(Boolean).length}/4 Photos
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleSaveStoreImagesNow}
+                    disabled={isSavingImages}
+                    className="px-3 py-1 bg-amber-700 hover:bg-amber-800 text-white rounded-xl text-xs font-bold transition-all shadow-2xs flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                  >
+                    {isSavingImages ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                    <span>{isSavingImages ? 'Saving...' : 'Save Photos'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {imageNotice && (
+                <div className="p-2.5 bg-emerald-50 border border-emerald-300 rounded-xl text-xs font-bold text-emerald-900 flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{imageNotice}</span>
+                </div>
+              )}
+
+              {/* 4 Image Slots Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+                {[0, 1, 2, 3].map((slotIdx) => {
+                  const imgUrl = storeImages[slotIdx];
+                  return (
+                    <div
+                      key={slotIdx}
+                      className="relative rounded-2xl border-2 border-dashed border-amber-300 hover:border-amber-400 bg-white p-2.5 flex flex-col items-center justify-center text-center transition-all overflow-hidden group min-h-[140px] shadow-2xs"
+                    >
+                      {imgUrl ? (
+                        <div className="w-full h-full flex flex-col items-center">
+                          <div className="relative w-full h-24 rounded-xl overflow-hidden bg-black/5 mb-2">
+                            <img
+                              src={imgUrl}
+                              alt={`Store Photo ${slotIdx + 1}`}
+                              className="w-full h-full object-cover"
+                            />
+                            <span className="absolute top-1 left-1 bg-darkbrown-900/80 text-white text-[9px] font-black px-1.5 py-0.5 rounded-md">
+                              #{slotIdx + 1}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 w-full justify-center">
+                            {/* Replace button with hidden file input */}
+                            <label
+                              htmlFor={`store-img-replace-${slotIdx}`}
+                              className="px-2 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-[10px] font-bold cursor-pointer transition-colors flex items-center gap-1"
+                              title="Replace Photo"
+                            >
+                              <Upload className="w-2.5 h-2.5" />
+                              <span>Replace</span>
+                            </label>
+                            <input
+                              id={`store-img-replace-${slotIdx}`}
+                              type="file"
+                              accept="image/*"
+                              onChange={(e) => handleStoreImageUpload(slotIdx, e)}
+                              className="hidden"
+                            />
+
+                            {/* Delete button */}
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveStoreImage(slotIdx)}
+                              className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-[10px] font-bold transition-colors flex items-center gap-1 cursor-pointer"
+                              title="Delete Photo"
+                            >
+                              <Trash2 className="w-2.5 h-2.5" />
+                              <span>Delete</span>
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <label
+                          htmlFor={`store-img-upload-${slotIdx}`}
+                          className="w-full h-full flex flex-col items-center justify-center cursor-pointer py-4 hover:bg-amber-50/50 rounded-xl transition-colors"
+                        >
+                          <div className="w-10 h-10 rounded-full bg-amber-100 text-amber-800 flex items-center justify-center mb-1.5 shadow-2xs">
+                            <Upload className="w-4 h-4" />
+                          </div>
+                          <span className="text-[11px] font-black text-darkbrown-900">
+                            Photo #{slotIdx + 1}
+                          </span>
+                          <span className="text-[9px] text-gray-500 mt-0.5">Click to Upload</span>
+                          <input
+                            id={`store-img-upload-${slotIdx}`}
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) => handleStoreImageUpload(slotIdx, e)}
+                            className="hidden"
+                          />
+                        </label>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
 

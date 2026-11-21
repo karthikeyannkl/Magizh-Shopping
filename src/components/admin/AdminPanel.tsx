@@ -288,6 +288,43 @@ export const AdminPanel: React.FC = () => {
     setTimeout(() => setNotice(null), 4000);
   };
 
+  const [isSyncingOrders, setIsSyncingOrders] = useState(false);
+  const [lastOrdersSyncTime, setLastOrdersSyncTime] = useState<Date>(new Date());
+
+  const loadAdminOrders = async (showSpin = false) => {
+    if (showSpin) setIsSyncingOrders(true);
+    try {
+      const res = await fetch(`/api/orders?_t=${Date.now()}`, {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+          ...StorageService.getAdminAuthHeaders(),
+        },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.orders)) {
+          setOrders(data.orders);
+          StorageService.setOrders(data.orders);
+          setLastOrdersSyncTime(new Date());
+        }
+      }
+    } catch (err) {
+      console.warn('[AdminPanel] Error fetching live orders from backend DB:', err);
+    } finally {
+      if (showSpin) setIsSyncingOrders(false);
+    }
+  };
+
+  useEffect(() => {
+    loadAdminOrders();
+    const orderInterval = setInterval(() => {
+      loadAdminOrders();
+    }, 4000);
+    return () => clearInterval(orderInterval);
+  }, []);
+
   const loadPartners = () => {
     fetch('/api/partners')
       .then((r) => r.json())
@@ -2890,7 +2927,19 @@ export const AdminPanel: React.FC = () => {
                 Update status to trigger shipping timeline, customer notifications, and B5 reward credits
               </p>
             </div>
-            <span className="text-xs font-mono font-bold text-gray-500">{orders.length} orders total</span>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => loadAdminOrders(true)}
+                disabled={isSyncingOrders}
+                className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                title={`Last synced: ${lastOrdersSyncTime.toLocaleTimeString()}`}
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSyncingOrders ? 'animate-spin text-emerald-600' : ''}`} />
+                <span>{isSyncingOrders ? 'Syncing...' : 'Live Sync Orders'}</span>
+              </button>
+              <span className="text-xs font-mono font-bold text-gray-500">{orders.length} orders total</span>
+            </div>
           </div>
 
           {/* Store UPI Payment & Merchant Configuration (Issue 6) */}

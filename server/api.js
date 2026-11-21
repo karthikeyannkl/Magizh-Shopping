@@ -864,6 +864,9 @@ apiRouter.post('/admin/store/payment-config', requireAdminAuth, (req, res) => {
 
 apiRouter.get('/orders', (req, res) => {
   try {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     const { customerId, mobile, phone } = req.query;
     let orders = dbService.getOrders();
     const searchPhone = (mobile || phone || '').trim();
@@ -1905,6 +1908,25 @@ apiRouter.put(['/partners/:id/settings', '/partners/:id/upi'], (req, res) => {
       success: true,
       partner: updated,
       message: 'Store settings and UPI configuration updated successfully.',
+    });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+// Partner Updates Store Images (up to 4 photos)
+apiRouter.post(['/partners/:id/store-images', '/partners/:id/images'], (req, res) => {
+  try {
+    const { images } = req.body;
+    if (!Array.isArray(images)) {
+      return res.status(400).json({ success: false, error: 'Images array is required.' });
+    }
+    const updated = dbService.updatePartnerStoreImages(req.params.id, images);
+    res.json({
+      success: true,
+      partner: updated,
+      storeImages: updated.storeImages,
+      message: 'Store images successfully updated in database (maximum 4 images saved).'
     });
   } catch (err) {
     res.status(400).json({ success: false, error: err.message });

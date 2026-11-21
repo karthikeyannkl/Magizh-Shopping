@@ -1305,7 +1305,7 @@ export const StorageService = {
       id: txnId,
       customerId,
       orderNumber: receiptNumber,
-      type: 'partner_local_redemption',
+      type: 'debit',
       amount: requestedCoins,
       reason: `In-Store purchase at ${partner.shopName} (Receipt #${receiptNumber})`,
       timestamp: new Date().toISOString(),

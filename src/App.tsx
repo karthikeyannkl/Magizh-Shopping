@@ -18,6 +18,7 @@ import { PartnerShopsDirectory } from './components/customer/PartnerShopsDirecto
 import { PartnerAuthGuard } from './components/common/PartnerAuthGuard';
 import { AdminAuthGuard } from './components/common/AdminAuthGuard';
 import { RoyalCelebrationModal, CelebrationData } from './components/common/RoyalCelebrationModal';
+import { IntroVideoModal } from './components/common/IntroVideoModal';
 import { StorageService, subscribe } from './services/storage';
 import { Product, WeightVariant, Coupon, Order, User } from './types';
 import { Store, Shield, TrendingUp, Sparkles, Heart, ExternalLink } from 'lucide-react';
@@ -97,6 +98,18 @@ export default function App() {
   // Royal Celebration Modal State
   const [globalCelebration, setGlobalCelebration] = useState<CelebrationData | null>(null);
   const [isCelebrationOpen, setIsCelebrationOpen] = useState(false);
+
+  // Intro Brand Video Modal State (Shows once per session on home entry)
+  const [showIntroVideo, setShowIntroVideo] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        return !sessionStorage.getItem('magizh_intro_shown') && (window.location.pathname === '/' || window.location.pathname === '');
+      } catch {
+        return false;
+      }
+    }
+    return false;
+  });
 
   // Initial live synchronization with authoritative server backend
   useEffect(() => {
@@ -481,6 +494,9 @@ export default function App() {
           }
         }}
       />
+
+      {/* Intro Brand Reveal Video Modal */}
+      {showIntroVideo && <IntroVideoModal onFinish={() => setShowIntroVideo(false)} />}
 
       {/* Royal Celebration Modal */}
       <RoyalCelebrationModal

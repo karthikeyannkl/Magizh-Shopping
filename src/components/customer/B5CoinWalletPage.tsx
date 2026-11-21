@@ -160,14 +160,18 @@ export const B5CoinWalletPage: React.FC<B5CoinWalletPageProps> = ({
     }
   };
 
-  const getTxTypeInfo = (type: B5Transaction['type']) => {
+  const getTxTypeInfo = (type: any) => {
     switch (type) {
       case 'credit':
       case 'manual_credit':
       case 'referral_bonus':
+      case 'reward_credit':
+      case 'partner_reward':
+      case 'order_reward':
         return { label: 'Credit', icon: ArrowDownLeft, color: 'text-emerald-700 bg-emerald-50 border-emerald-200' };
       case 'debit':
-        return { label: 'Redeemed', icon: ArrowUpRight, color: 'text-b5-700 bg-b5-50 border-b5-200' };
+      case 'partner_redemption':
+        return { label: 'Redeemed', icon: ArrowUpRight, color: 'text-rose-700 bg-rose-50 border-rose-200' };
       case 'reversal':
         return { label: 'Reversal', icon: RotateCcw, color: 'text-purple-700 bg-purple-50 border-purple-200' };
       case 'pending':
@@ -329,64 +333,79 @@ export const B5CoinWalletPage: React.FC<B5CoinWalletPageProps> = ({
           </span>
         </div>
 
-        {transactions.length === 0 ? (
-          <p className="text-xs text-gray-400 text-center py-6">No coin transactions yet</p>
-        ) : (
-          <div className="space-y-2.5">
-            {transactions.map((tx) => {
-              const info = getTxTypeInfo(tx.type);
-              const Icon = info.icon;
-              const isPositive = tx.type === 'credit' || tx.type === 'manual_credit' || tx.type === 'referral_bonus' || tx.type === 'reversal';
+        {(() => {
+          // Deduplicate by ID and sort newest first
+          const uniqueTransactions = Array.from(
+            new Map(transactions.map((t) => [t.id || `${t.timestamp}-${t.amount}`, t])).values()
+          ).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
-              return (
-                <div
-                  key={tx.id}
-                  className="p-3 rounded-2xl border border-cream-200 hover:border-cream-300 bg-cream-50/40 flex items-center justify-between gap-3 text-xs"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 border ${info.color}`}>
-                      <Icon className="w-4 h-4" />
-                    </div>
+          if (uniqueTransactions.length === 0) {
+            return <p className="text-xs text-gray-400 text-center py-6">No coin transactions yet</p>;
+          }
 
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-darkbrown-900">{tx.reason}</span>
-                        {tx.orderNumber && (
-                          <span className="font-mono text-[10px] bg-white border border-cream-300 px-1.5 py-0.2 rounded text-gray-600">
-                            {tx.orderNumber}
-                          </span>
-                        )}
+          return (
+            <div className="space-y-2.5">
+              {uniqueTransactions.map((tx) => {
+                const info = getTxTypeInfo(tx.type);
+                const Icon = info.icon;
+                const typeStr = String(tx.type || '').toLowerCase();
+                const isPositive =
+                  typeStr.includes('credit') ||
+                  typeStr.includes('reward') ||
+                  typeStr.includes('bonus') ||
+                  typeStr === 'reversal' ||
+                  (typeStr !== 'debit' && typeStr !== 'partner_redemption' && tx.amount > 0);
+
+                return (
+                  <div
+                    key={tx.id}
+                    className="p-3 rounded-2xl border border-cream-200 hover:border-cream-300 bg-cream-50/40 flex items-center justify-between gap-3 text-xs"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 border ${info.color}`}>
+                        <Icon className="w-4 h-4" />
                       </div>
-                      <p className="text-[11px] text-gray-400 flex items-center gap-1 mt-0.5">
-                        <Calendar className="w-3 h-3" />
-                        {new Date(tx.timestamp).toLocaleString('en-IN', {
-                          day: 'numeric',
-                          month: 'short',
-                          year: 'numeric',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
-                      </p>
+
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-darkbrown-900">{tx.reason}</span>
+                          {tx.orderNumber && (
+                            <span className="font-mono text-[10px] bg-white border border-cream-300 px-1.5 py-0.2 rounded text-gray-600">
+                              {tx.orderNumber}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-gray-400 flex items-center gap-1 mt-0.5">
+                          <Calendar className="w-3 h-3" />
+                          {new Date(tx.timestamp).toLocaleString('en-IN', {
+                            day: 'numeric',
+                            month: 'short',
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="text-right shrink-0">
+                      <span
+                        className={`font-black font-mono text-sm sm:text-base block ${
+                          isPositive ? 'text-emerald-700' : 'text-rose-600'
+                        }`}
+                      >
+                        {isPositive ? '+' : '-'}{tx.amount} B5
+                      </span>
+                      <span className="text-[10px] text-gray-500 font-mono">
+                        Bal: {tx.balanceAfter}
+                      </span>
                     </div>
                   </div>
-
-                  <div className="text-right shrink-0">
-                    <span
-                      className={`font-black font-mono text-sm sm:text-base block ${
-                        isPositive ? 'text-emerald-700' : 'text-b5-700'
-                      }`}
-                    >
-                      {isPositive ? '+' : '-'}{tx.amount} B5
-                    </span>
-                    <span className="text-[10px] text-gray-500 font-mono">
-                      Bal: {tx.balanceAfter}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
+                );
+              })}
+            </div>
+          );
+        })()}
       </div>
 
       {/* Customer Coin Credit Requests History (Phase 1) */}

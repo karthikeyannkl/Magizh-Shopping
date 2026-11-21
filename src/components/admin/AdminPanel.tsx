@@ -202,6 +202,31 @@ export const AdminPanel: React.FC = () => {
   const [isCreatingPartner, setIsCreatingPartner] = useState(false);
   const [partnerCreateError, setPartnerCreateError] = useState<string | null>(null);
 
+  // Commission Settings State (Section 9)
+  const [commissionSettings, setCommissionSettings] = useState({
+    partnerCommissionRate: 8.0,
+    customerRewardCoinsPercentage: 5.0,
+    bonusMultiplier: 1.5,
+  });
+  const [isSavingCommission, setIsSavingCommission] = useState(false);
+
+  // Inventory Filter & Stock Edit State (Section 13)
+  const [inventorySearch, setInventorySearch] = useState('');
+  const [inventoryFilter, setInventoryFilter] = useState<'all' | 'low' | 'out_of_stock' | 'optimal'>('all');
+  const [inventoryCategory, setInventoryCategory] = useState('all');
+
+  // Coupon Management State (Section 14)
+  const [isCouponModalOpen, setIsCouponModalOpen] = useState(false);
+  const [editingCoupon, setEditingCoupon] = useState<Coupon | null>(null);
+  const [couponCode, setCouponCode] = useState('');
+  const [couponType, setCouponType] = useState<'percentage' | 'fixed'>('percentage');
+  const [couponVal, setCouponVal] = useState<number>(10);
+  const [couponMinOrder, setCouponMinOrder] = useState<number>(500);
+  const [couponMaxDisc, setCouponMaxDisc] = useState<string>('150');
+  const [couponValidUntil, setCouponValidUntil] = useState('2026-12-31');
+  const [couponDesc, setCouponDesc] = useState('');
+  const [couponFilter, setCouponFilter] = useState<'all' | 'active' | 'expired'>('all');
+
   // Test Runner State (20 Comprehensive Specifications)
   const [testResults, setTestResults] = useState<{
     running: boolean;
@@ -263,6 +288,21 @@ export const AdminPanel: React.FC = () => {
     setTimeout(() => setNotice(null), 4000);
   };
 
+  const loadPartners = () => {
+    fetch('/api/partners')
+      .then((r) => r.json())
+      .then((pd) => {
+        if (pd.partners && Array.isArray(pd.partners)) {
+          setPartners(pd.partners);
+          setPartnerApplications((prev) => (prev.length > 0 ? prev : pd.partners.map((p: any) => ({
+            ...p,
+            applicationStatus: p.applicationStatus || p.status || 'pending',
+          }))));
+        }
+      })
+      .catch(() => setPartners(StorageService.getPartners()));
+  };
+
   const loadPartnerApplications = () => {
     setIsLoadingApplications(true);
     const headers = StorageService.getAdminAuthHeaders();
@@ -274,10 +314,10 @@ export const AdminPanel: React.FC = () => {
           setPartnerApplications(data.applications);
         } else {
           // Synchronize from partners state or local storage
-          const localPartners = StorageService.getPartners();
-          if (localPartners.length > 0) {
+          const list = partners.length > 0 ? partners : StorageService.getPartners();
+          if (list.length > 0) {
             setPartnerApplications(
-              localPartners.map((p) => ({
+              list.map((p) => ({
                 ...p,
                 applicationStatus: p.applicationStatus || p.status || 'pending',
               }))
@@ -287,16 +327,202 @@ export const AdminPanel: React.FC = () => {
       })
       .catch(() => {
         setIsLoadingApplications(false);
-        const localPartners = StorageService.getPartners();
-        if (localPartners.length > 0) {
+        const list = partners.length > 0 ? partners : StorageService.getPartners();
+        if (list.length > 0) {
           setPartnerApplications(
-            localPartners.map((p) => ({
+            list.map((p) => ({
               ...p,
               applicationStatus: p.applicationStatus || p.status || 'pending',
             }))
           );
         }
       });
+  };
+
+  const loadCommissionSettings = () => {
+    fetch('/api/admin/commission-settings')
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.success && data.settings) {
+          setCommissionSettings({
+            partnerCommissionRate: data.settings.partnerCommissionRate ?? 8.0,
+            customerRewardCoinsPercentage: data.settings.customerRewardCoinsPercentage ?? 5.0,
+            bonusMultiplier: data.settings.bonusMultiplier ?? 1.5,
+          });
+        }
+      })
+      .catch(() => {});
+  };
+
+  const loadCoupons = () => {
+    fetch('/api/coupons')
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.success && Array.isArray(data.coupons)) {
+          setCoupons(data.coupons);
+        }
+      })
+      .catch(() => setCoupons(StorageService.getCoupons()));
+  };
+
+  const handleSaveCommissionSettings = async () => {
+    setIsSavingCommission(true);
+    try {
+      const headers = StorageService.getAdminAuthHeaders();
+      const res = await fetch('/api/admin/commission-settings', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(commissionSettings),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        showNotification(data.error || 'Failed to save commission settings');
+      } else {
+        showNotification('Commission & bonus rates saved successfully! Applied to new transactions.');
+      }
+    } catch (err: any) {
+      showNotification(err.message || 'Network error saving commission settings');
+    } finally {
+      setIsSavingCommission(false);
+    }
+  };
+
+  const handleQuickUpdateStock = (productId: string, variantIndex: number, delta: number) => {
+    const prod = products.find((p) => p.id === productId);
+    if (!prod || !prod.variants?.[variantIndex]) return;
+    const currentStock = prod.variants[variantIndex].stock || 0;
+    const newStock = Math.max(0, currentStock + delta);
+    handleSetExactStock(productId, variantIndex, newStock);
+  };
+
+  const handleSetExactStock = async (productId: string, variantIndex: number, newStock: number) => {
+    const prod = products.find((p) => p.id === productId);
+    if (!prod || !prod.variants?.[variantIndex]) return;
+
+    const updatedVariants = [...prod.variants];
+    const oldStock = updatedVariants[variantIndex].stock;
+    updatedVariants[variantIndex] = {
+      ...updatedVariants[variantIndex],
+      stock: newStock,
+    };
+
+    const updatedProduct = {
+      ...prod,
+      variants: updatedVariants,
+    };
+
+    StorageService.saveProduct(updatedProduct);
+    setProducts((prev) => prev.map((p) => (p.id === productId ? updatedProduct : p)));
+
+    try {
+      const headers = StorageService.getAdminAuthHeaders();
+      await fetch(`/api/products/${productId}`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify(updatedProduct),
+      });
+    } catch (_) {}
+
+    StorageService.logAction(
+      'admin',
+      'Administrator',
+      'UPDATE_STOCK',
+      `Stock for ${prod.name} (${updatedVariants[variantIndex].weight}) adjusted: ${oldStock} -> ${newStock} units`
+    );
+
+    showNotification(`Stock updated for ${prod.name} (${updatedVariants[variantIndex].weight}): ${newStock} units`);
+  };
+
+  const handleOpenCreateCoupon = () => {
+    setEditingCoupon(null);
+    setCouponCode('');
+    setCouponType('percentage');
+    setCouponVal(10);
+    setCouponMinOrder(500);
+    setCouponMaxDisc('150');
+    setCouponValidUntil('2026-12-31');
+    setCouponDesc('');
+    setIsCouponModalOpen(true);
+  };
+
+  const handleOpenEditCoupon = (c: Coupon) => {
+    setEditingCoupon(c);
+    setCouponCode(c.code);
+    setCouponType(c.discountType);
+    setCouponVal(c.discountValue);
+    setCouponMinOrder(c.minOrderValue || 0);
+    setCouponMaxDisc(c.maxDiscount != null ? String(c.maxDiscount) : '');
+    setCouponValidUntil(c.validUntil);
+    setCouponDesc(c.description || '');
+    setIsCouponModalOpen(true);
+  };
+
+  const handleSaveCouponForm = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!couponCode.trim()) {
+      alert('Coupon code is required.');
+      return;
+    }
+
+    const cpn: Coupon = {
+      code: couponCode.trim().toUpperCase(),
+      discountType: couponType,
+      discountValue: Number(couponVal),
+      minOrderValue: Number(couponMinOrder) || 0,
+      maxDiscount: couponMaxDisc ? Number(couponMaxDisc) : undefined,
+      description: couponDesc.trim() || `Coupon ${couponCode.trim().toUpperCase()}`,
+      validUntil: couponValidUntil,
+      active: editingCoupon ? editingCoupon.active : true,
+    };
+
+    StorageService.saveCoupon(cpn);
+    setCoupons(StorageService.getCoupons());
+
+    try {
+      const headers = StorageService.getAdminAuthHeaders();
+      await fetch('/api/admin/coupons', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(cpn),
+      });
+    } catch (_) {}
+
+    StorageService.logAction('admin', 'Administrator', 'SAVE_COUPON', `Saved coupon ${cpn.code}`);
+    showNotification(`Coupon ${cpn.code} saved successfully!`);
+    setIsCouponModalOpen(false);
+  };
+
+  const handleToggleCoupon = async (c: Coupon) => {
+    StorageService.toggleCoupon(c.code);
+    const updated = StorageService.getCoupons();
+    setCoupons(updated);
+
+    try {
+      const headers = StorageService.getAdminAuthHeaders();
+      await fetch(`/api/admin/coupons/${c.code}`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ active: !c.active }),
+      });
+    } catch (_) {}
+
+    showNotification(`Coupon ${c.code} is now ${!c.active ? 'Active' : 'Disabled'}`);
+  };
+
+  const handleDeleteCoupon = async (code: string) => {
+    if (!confirm(`Are you sure you want to delete coupon ${code}?`)) return;
+    StorageService.deleteCoupon(code);
+    setCoupons(StorageService.getCoupons());
+
+    try {
+      const headers = StorageService.getAdminAuthHeaders();
+      await fetch(`/api/admin/coupons/${code}`, {
+        method: 'DELETE',
+        headers,
+      });
+    } catch (_) {}
+
+    showNotification(`Coupon ${code} deleted.`);
   };
 
   const [isLoadingCoinRequests, setIsLoadingCoinRequests] = useState(false);
@@ -507,6 +733,7 @@ export const AdminPanel: React.FC = () => {
   };
 
   useEffect(() => {
+    loadPartners();
     loadPartnerApplications();
     loadAdminBills();
     loadAdminImages();
@@ -514,6 +741,8 @@ export const AdminPanel: React.FC = () => {
     loadCoinRequests();
     loadAdminCustomers();
     loadAdminPayments();
+    loadCommissionSettings();
+    loadCoupons();
   }, []);
 
   useEffect(() => {
@@ -1627,9 +1856,41 @@ export const AdminPanel: React.FC = () => {
               </div>
 
               {/* 8 Live Statistics Cards */}
+              {/* Item 12: High-Priority Pending Coin Requests Alert on Dashboard */}
+              {manualRequests.filter((r) => r.status === 'pending').length > 0 && (
+                <div className="p-4 bg-gradient-to-r from-amber-500/15 via-amber-500/10 to-orange-500/15 border-2 border-amber-400 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs animate-in fade-in">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-amber-500 text-white flex items-center justify-center font-black shrink-0 shadow-xs">
+                      <Coins className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <span className="font-black text-sm text-darkbrown-900 flex items-center gap-2">
+                        <span>Pending B5 Coin Credit Requests: {manualRequests.filter((r) => r.status === 'pending').length} Action Required</span>
+                        <span className="bg-red-500 text-white font-mono text-[10px] px-2 py-0.2 rounded-full animate-pulse">Urgent</span>
+                      </span>
+                      <p className="text-xs text-amber-900 mt-0.5">
+                        Customers have submitted manual coin requests requiring administrator review and atomic wallet credit.
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => handleSelectSidebarTab('coins')}
+                    className="px-4 py-2 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white font-black text-xs rounded-xl shadow-md transition-all flex items-center gap-1.5 self-start sm:self-center shrink-0"
+                  >
+                    <span>Review &amp; Approve Coin Requests</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+
+              {/* Item 11: Summary Cards with Direct Navigation & Stage Filtering */}
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
                 <div
-                  onClick={() => handleSelectSidebarTab('orders')}
+                  onClick={() => {
+                    handleSelectSidebarTab('orders');
+                    setOrderSubTab('all');
+                  }}
                   className="bg-white p-4 rounded-2xl border border-cream-200 shadow-2xs hover:border-amber-400 cursor-pointer transition-all space-y-2 group"
                 >
                   <div className="flex items-center justify-between text-gray-500">
@@ -1645,7 +1906,7 @@ export const AdminPanel: React.FC = () => {
                 </div>
 
                 <div
-                  onClick={() => handleSelectSidebarTab('orders')}
+                  onClick={() => handleSelectSidebarTab('payments')}
                   className="bg-white p-4 rounded-2xl border border-cream-200 shadow-2xs hover:border-amber-400 cursor-pointer transition-all space-y-2 group"
                 >
                   <div className="flex items-center justify-between text-gray-500">
@@ -1656,12 +1917,15 @@ export const AdminPanel: React.FC = () => {
                   </div>
                   <p className="text-2xl font-black text-red-600">{newOrdersCount}</p>
                   <span className="text-[11px] font-bold text-red-700 flex items-center gap-1">
-                    Needs verification <ArrowRight className="w-3 h-3" />
+                    Payment verification <ArrowRight className="w-3 h-3" />
                   </span>
                 </div>
 
                 <div
-                  onClick={() => handleSelectSidebarTab('orders')}
+                  onClick={() => {
+                    handleSelectSidebarTab('orders');
+                    setOrderSubTab('processing');
+                  }}
                   className="bg-white p-4 rounded-2xl border border-cream-200 shadow-2xs hover:border-amber-400 cursor-pointer transition-all space-y-2 group"
                 >
                   <div className="flex items-center justify-between text-gray-500">
@@ -1677,7 +1941,10 @@ export const AdminPanel: React.FC = () => {
                 </div>
 
                 <div
-                  onClick={() => handleSelectSidebarTab('orders')}
+                  onClick={() => {
+                    handleSelectSidebarTab('orders');
+                    setOrderSubTab('delivery');
+                  }}
                   className="bg-white p-4 rounded-2xl border border-cream-200 shadow-2xs hover:border-amber-400 cursor-pointer transition-all space-y-2 group"
                 >
                   <div className="flex items-center justify-between text-gray-500">
@@ -1688,12 +1955,15 @@ export const AdminPanel: React.FC = () => {
                   </div>
                   <p className="text-2xl font-black text-emerald-800">{deliveredOrdersCount}</p>
                   <span className="text-[11px] font-bold text-emerald-700 flex items-center gap-1">
-                    Fulfilled successfully
+                    Fulfilled successfully <ArrowRight className="w-3 h-3" />
                   </span>
                 </div>
 
                 <div
-                  onClick={() => handleSelectSidebarTab('orders')}
+                  onClick={() => {
+                    handleSelectSidebarTab('orders');
+                    setOrderSubTab('all');
+                  }}
                   className="bg-white p-4 rounded-2xl border border-cream-200 shadow-2xs hover:border-amber-400 cursor-pointer transition-all space-y-2 group"
                 >
                   <div className="flex items-center justify-between text-gray-500">
@@ -3698,9 +3968,215 @@ export const AdminPanel: React.FC = () => {
         </div>
       )}
 
-      {/* 5. COIN RULES & LEDGER */}
+      {/* 5. COINS & LEDGER (Customer Requests Priority First - Item 12) */}
       {activeSidebarTab === 'coins' && (
         <div className="space-y-6">
+          {/* A. Customer B5 Coin Credit Requests (Priority #1 - Shown at top) */}
+          <div className="bg-white rounded-3xl border border-cream-300 p-5 shadow-2xs space-y-4">
+            <div className="border-b border-cream-200 pb-3 flex justify-between items-center">
+              <div>
+                <h2 className="text-sm font-extrabold text-darkbrown-900 flex items-center gap-2">
+                  <Coins className="w-4 h-4 text-b5-700" />
+                  <span>Customer B5 Coin Credit Requests</span>
+                </h2>
+                <p className="text-xs text-gray-500">
+                  Manual verification &amp; atomic wallet credit by Magizh Administrator. Pending requests prioritized first.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={loadCoinRequests}
+                  disabled={isLoadingCoinRequests}
+                  className="px-2.5 py-1 bg-cream-100 hover:bg-cream-200 text-darkbrown-800 rounded-lg text-xs font-bold transition-all flex items-center gap-1 border border-cream-300 disabled:opacity-50"
+                >
+                  <RotateCcw className={`w-3 h-3 ${isLoadingCoinRequests ? 'animate-spin' : ''}`} />
+                  <span>Refresh</span>
+                </button>
+                <span className="text-xs font-mono font-bold text-amber-800 bg-amber-50 border border-amber-300 px-2 py-0.5 rounded-full">
+                  {manualRequests.filter((r) => r.status === 'pending').length} pending
+                </span>
+              </div>
+            </div>
+
+            {(() => {
+              const sortedManualRequests = [...manualRequests].sort((a, b) => {
+                const order: Record<string, number> = { pending: 1, approved: 2, rejected: 3 };
+                const diff = (order[a.status] || 99) - (order[b.status] || 99);
+                if (diff !== 0) return diff;
+                return new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime();
+              });
+
+              if (sortedManualRequests.length === 0) {
+                return (
+                  <div className="text-center py-8 text-gray-400 space-y-1">
+                    <Coins className="w-8 h-8 mx-auto opacity-30 text-darkbrown-400" />
+                    <p className="text-xs">No coin requests currently in queue.</p>
+                  </div>
+                );
+              }
+
+              return (
+                <div className="space-y-3">
+                  {sortedManualRequests.map((req) => (
+                    <div
+                      key={req.id}
+                      className={`p-4 border rounded-2xl text-xs flex flex-col lg:flex-row lg:items-center justify-between gap-4 transition-all ${
+                        req.status === 'pending'
+                          ? 'bg-amber-50/50 border-amber-300 shadow-xs'
+                          : req.status === 'approved'
+                          ? 'bg-emerald-50/20 border-emerald-200'
+                          : 'bg-cream-50/50 border-cream-300'
+                      }`}
+                    >
+                      <div className="space-y-1.5 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono font-bold text-darkbrown-900 bg-white px-2 py-0.5 rounded border border-cream-300">
+                            {req.id}
+                          </span>
+                          <span className="font-black text-darkbrown-900 text-sm">
+                            {req.customerName}
+                          </span>
+                          <span className="font-mono text-gray-600 bg-cream-100 px-1.5 py-0.2 rounded">
+                            {req.customerPhone}
+                          </span>
+                          {req.customerEmail && (
+                            <span className="text-gray-500 font-mono text-[11px]">
+                              {req.customerEmail}
+                            </span>
+                          )}
+                          <span className="bg-amber-100 text-amber-800 text-[11px] font-black px-2 py-0.5 rounded">
+                            Requested: {req.coins} Coins (= ₹{req.coins})
+                          </span>
+                          {req.status === 'pending' && (
+                            <span className="bg-amber-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider animate-pulse">
+                              Urgent Review
+                            </span>
+                          )}
+                        </div>
+
+                        <p className="text-gray-700">
+                          <strong className="text-darkbrown-900">Reason:</strong> "{req.reason}"
+                        </p>
+
+                        {req.b5Id && (
+                          <p className="text-[11px] text-gray-600 font-mono">
+                            <strong className="text-darkbrown-800">Customer B5 ID Reference:</strong> {req.b5Id}{' '}
+                            <span className="text-gray-400">(Manual verification only)</span>
+                          </p>
+                        )}
+
+                        <div className="text-[10px] text-gray-400 flex items-center gap-2">
+                          <span>Requested by: {req.requestedBy}</span>
+                          <span>&bull;</span>
+                          <span>Date: {new Date(req.requestedAt).toLocaleString('en-IN')}</span>
+                        </div>
+
+                        {req.status !== 'pending' && (
+                          <div className="mt-2 p-2 bg-white rounded-xl border border-cream-300 text-[11px] space-y-1">
+                            <div className="flex items-center gap-3 text-gray-600">
+                              {req.approvedAmount != null && (
+                                <span>
+                                  <strong>Approved:</strong> +{req.approvedAmount} Coins
+                                </span>
+                              )}
+                              {req.previousBalance != null && req.newBalance != null && (
+                                <span>
+                                  <strong>Balance:</strong> {req.previousBalance} &rarr; {req.newBalance}
+                                </span>
+                              )}
+                              {req.adminId && <span><strong>Admin:</strong> {req.adminId}</span>}
+                              {req.resolvedAt && (
+                                <span>
+                                  <strong>Resolved:</strong> {new Date(req.resolvedAt).toLocaleString('en-IN')}
+                                </span>
+                              )}
+                            </div>
+                            {req.adminNotes && (
+                              <p className="text-gray-700">
+                                <strong>Admin Note:</strong> {req.adminNotes}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="shrink-0 space-y-2">
+                        {req.status === 'pending' ? (
+                          <div className="space-y-2 bg-white p-3 rounded-2xl border border-cream-300 sm:w-80">
+                            <div className="flex items-center gap-2">
+                              <label className="text-[11px] font-bold text-darkbrown-800 shrink-0">
+                                Approve Coins:
+                              </label>
+                              <input
+                                type="number"
+                                min={1}
+                                max={10000}
+                                value={requestApprovedCoins[req.id] !== undefined ? requestApprovedCoins[req.id] : req.coins}
+                                onChange={(e) =>
+                                  setRequestApprovedCoins((prev) => ({
+                                    ...prev,
+                                    [req.id]: Math.max(1, parseInt(e.target.value) || 0),
+                                  }))
+                                }
+                                className="w-24 p-1.5 border border-cream-300 rounded-lg font-mono font-bold text-right"
+                              />
+                            </div>
+                            <input
+                              type="text"
+                              placeholder="Admin review notes..."
+                              value={requestNotes[req.id] || ''}
+                              onChange={(e) =>
+                                setRequestNotes((prev) => ({
+                                  ...prev,
+                                  [req.id]: e.target.value,
+                                }))
+                              }
+                              className="w-full p-1.5 border border-cream-300 rounded-lg text-xs"
+                            />
+                            <div className="flex items-center gap-2 pt-1">
+                              <button
+                                onClick={() => handleResolveRequest(req.id, 'approved')}
+                                className="flex-1 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-1 shadow-2xs"
+                              >
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                <span>Approve</span>
+                              </button>
+                              <button
+                                onClick={() => handleResolveRequest(req.id, 'rejected')}
+                                className="flex-1 py-1.5 bg-red-700 hover:bg-red-800 text-white rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-1 shadow-2xs"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                                <span>Reject</span>
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex justify-end">
+                            <span
+                              className={`font-black text-xs uppercase px-3 py-1.5 rounded-xl border flex items-center gap-1.5 ${
+                                req.status === 'approved'
+                                  ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                                  : 'bg-red-100 text-red-900 border-red-300'
+                              }`}
+                            >
+                              {req.status === 'approved' ? (
+                                <CheckCircle2 className="w-4 h-4 text-emerald-700" />
+                              ) : (
+                                <X className="w-4 h-4 text-red-700" />
+                              )}
+                              <span>{req.status}</span>
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* B. Global Coin Reward & Redemption Rules */}
           <div className="bg-white rounded-3xl border border-cream-300 p-5 shadow-2xs space-y-4">
             <div className="border-b border-cream-200 pb-3 flex justify-between items-center">
               <div>
@@ -3765,7 +4241,7 @@ export const AdminPanel: React.FC = () => {
             </div>
           </div>
 
-          {/* Ledger Table */}
+          {/* C. Platform B5 Coin Transaction Ledger */}
           <div className="bg-white rounded-3xl border border-cream-300 p-5 shadow-2xs space-y-4">
             <div className="border-b border-cream-200 pb-3 flex justify-between items-center">
               <div>
@@ -3806,195 +4282,6 @@ export const AdminPanel: React.FC = () => {
               ))}
             </div>
           </div>
-        </div>
-      )}
-
-      {/* 6. MANUAL COIN REQUESTS (Phase 1) */}
-      {activeSidebarTab === 'coins' && (
-        <div className="bg-white rounded-3xl border border-cream-300 p-5 shadow-2xs space-y-4">
-          <div className="border-b border-cream-200 pb-3 flex justify-between items-center">
-            <div>
-              <h2 className="text-sm font-extrabold text-darkbrown-900 flex items-center gap-2">
-                <Coins className="w-4 h-4 text-b5-700" />
-                <span>Customer B5 Coin Credit Requests</span>
-              </h2>
-              <p className="text-xs text-gray-500">
-                Manual verification &amp; atomic wallet credit by Magizh Administrator. Zero automatic welcome coins.
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={loadCoinRequests}
-                disabled={isLoadingCoinRequests}
-                className="px-2.5 py-1 bg-cream-100 hover:bg-cream-200 text-darkbrown-800 rounded-lg text-xs font-bold transition-all flex items-center gap-1 border border-cream-300 disabled:opacity-50"
-              >
-                <RotateCcw className={`w-3 h-3 ${isLoadingCoinRequests ? 'animate-spin' : ''}`} />
-                <span>Refresh</span>
-              </button>
-              <span className="text-xs font-mono font-bold text-amber-800 bg-amber-50 border border-amber-300 px-2 py-0.5 rounded-full">
-                {manualRequests.filter((r) => r.status === 'pending').length} pending
-              </span>
-            </div>
-          </div>
-
-          {manualRequests.length === 0 ? (
-            <div className="text-center py-8 text-gray-400 space-y-1">
-              <Coins className="w-8 h-8 mx-auto opacity-30 text-darkbrown-400" />
-              <p className="text-xs">No coin requests currently in queue.</p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {manualRequests.map((req) => (
-                <div
-                  key={req.id}
-                  className={`p-4 border rounded-2xl text-xs flex flex-col lg:flex-row lg:items-center justify-between gap-4 transition-all ${
-                    req.status === 'pending'
-                      ? 'bg-amber-50/30 border-amber-200'
-                      : req.status === 'approved'
-                      ? 'bg-emerald-50/20 border-emerald-200'
-                      : 'bg-cream-50/50 border-cream-300'
-                  }`}
-                >
-                  <div className="space-y-1.5 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-mono font-bold text-darkbrown-900 bg-white px-2 py-0.5 rounded border border-cream-300">
-                        {req.id}
-                      </span>
-                      <span className="font-black text-darkbrown-900 text-sm">
-                        {req.customerName}
-                      </span>
-                      <span className="font-mono text-gray-600 bg-cream-100 px-1.5 py-0.2 rounded">
-                        {req.customerPhone}
-                      </span>
-                      {req.customerEmail && (
-                        <span className="text-gray-500 font-mono text-[11px]">
-                          {req.customerEmail}
-                        </span>
-                      )}
-                      <span className="bg-amber-100 text-amber-800 text-[11px] font-black px-2 py-0.5 rounded">
-                        Requested: {req.coins} Coins (= ₹{req.coins})
-                      </span>
-                    </div>
-
-                    <p className="text-gray-700">
-                      <strong className="text-darkbrown-900">Reason:</strong> "{req.reason}"
-                    </p>
-
-                    {req.b5Id && (
-                      <p className="text-[11px] text-gray-600 font-mono">
-                        <strong className="text-darkbrown-800">Customer B5 ID Reference:</strong> {req.b5Id}{' '}
-                        <span className="text-gray-400">(Manual verification only)</span>
-                      </p>
-                    )}
-
-                    <div className="text-[10px] text-gray-400 flex items-center gap-2">
-                      <span>Requested by: {req.requestedBy}</span>
-                      <span>&bull;</span>
-                      <span>Date: {new Date(req.requestedAt).toLocaleString('en-IN')}</span>
-                    </div>
-
-                    {req.status !== 'pending' && (
-                      <div className="mt-2 p-2 bg-white rounded-xl border border-cream-300 text-[11px] space-y-1">
-                        <div className="flex items-center gap-3 text-gray-600">
-                          {req.approvedAmount != null && (
-                            <span>
-                              <strong>Approved:</strong> +{req.approvedAmount} Coins
-                            </span>
-                          )}
-                          {req.previousBalance != null && req.newBalance != null && (
-                            <span>
-                              <strong>Balance:</strong> {req.previousBalance} &rarr; {req.newBalance}
-                            </span>
-                          )}
-                          {req.adminId && <span><strong>Admin:</strong> {req.adminId}</span>}
-                          {req.resolvedAt && (
-                            <span>
-                              <strong>Resolved:</strong> {new Date(req.resolvedAt).toLocaleString('en-IN')}
-                            </span>
-                          )}
-                        </div>
-                        {req.adminNotes && (
-                          <p className="text-gray-700">
-                            <strong>Admin Note:</strong> {req.adminNotes}
-                          </p>
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="shrink-0 space-y-2">
-                    {req.status === 'pending' ? (
-                      <div className="space-y-2 bg-white p-3 rounded-2xl border border-cream-300 sm:w-80">
-                        <div className="flex items-center gap-2">
-                          <label className="text-[11px] font-bold text-darkbrown-800 shrink-0">
-                            Approve Coins:
-                          </label>
-                          <input
-                            type="number"
-                            min={1}
-                            max={10000}
-                            value={requestApprovedCoins[req.id] !== undefined ? requestApprovedCoins[req.id] : req.coins}
-                            onChange={(e) =>
-                              setRequestApprovedCoins((prev) => ({
-                                ...prev,
-                                [req.id]: Math.max(1, parseInt(e.target.value) || 0),
-                              }))
-                            }
-                            className="w-24 p-1.5 border border-cream-300 rounded-lg font-mono font-bold text-right"
-                          />
-                        </div>
-                        <input
-                          type="text"
-                          placeholder="Admin review notes..."
-                          value={requestNotes[req.id] || ''}
-                          onChange={(e) =>
-                            setRequestNotes((prev) => ({
-                              ...prev,
-                              [req.id]: e.target.value,
-                            }))
-                          }
-                          className="w-full p-1.5 border border-cream-300 rounded-lg text-xs"
-                        />
-                        <div className="flex items-center gap-2 pt-1">
-                          <button
-                            onClick={() => handleResolveRequest(req.id, 'approved')}
-                            className="flex-1 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-1 shadow-2xs"
-                          >
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                            <span>Approve</span>
-                          </button>
-                          <button
-                            onClick={() => handleResolveRequest(req.id, 'rejected')}
-                            className="flex-1 py-1.5 bg-red-700 hover:bg-red-800 text-white rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-1 shadow-2xs"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                            <span>Reject</span>
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex justify-end">
-                        <span
-                          className={`font-black text-xs uppercase px-3 py-1.5 rounded-xl border flex items-center gap-1.5 ${
-                            req.status === 'approved'
-                              ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
-                              : 'bg-red-100 text-red-900 border-red-300'
-                          }`}
-                        >
-                          {req.status === 'approved' ? (
-                            <CheckCircle2 className="w-4 h-4 text-emerald-700" />
-                          ) : (
-                            <X className="w-4 h-4 text-red-700" />
-                          )}
-                          <span>{req.status}</span>
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       )}
 
@@ -4248,68 +4535,638 @@ export const AdminPanel: React.FC = () => {
         </div>
       )}
 
-      {/* 8. COUPONS MANAGEMENT */}
-      {activeSidebarTab === 'settings' && (
-        <div className="bg-white rounded-3xl border border-cream-300 p-5 shadow-2xs space-y-4">
-          <div className="border-b border-cream-200 pb-3 flex justify-between items-center">
-            <div>
-              <h2 className="text-sm font-extrabold text-darkbrown-900">Promotional Coupons</h2>
-              <p className="text-xs text-gray-500">Discount codes stackable or independent of B5 Coins</p>
+      {/* INVENTORY & STOCK MANAGEMENT (Item 13) */}
+      {activeSidebarTab === 'inventory' && (
+        <div className="space-y-6 animate-in fade-in">
+          {/* Header */}
+          <div className="bg-white rounded-3xl border border-cream-300 p-5 sm:p-6 shadow-2xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-cream-200 pb-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-amber-600 to-amber-800 flex items-center justify-center text-white shadow-xs">
+                    <Layers className="w-4 h-4" />
+                  </div>
+                  <h2 className="text-base sm:text-lg font-extrabold text-darkbrown-900">
+                    Store Inventory &amp; Warehouse Stock Oversight
+                  </h2>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  Track real-time stock levels, low-stock thresholds (&lt; 20 units), out-of-stock items, batch numbers, and variant quantities.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-mono font-bold text-gray-500 bg-cream-100 px-3 py-1.5 rounded-xl border border-cream-300">
+                  {products.reduce((acc, p) => acc + (p.variants?.length || 1), 0)} Tracked SKUs
+                </span>
+              </div>
             </div>
-            <button
-              onClick={() => {
-                const code = prompt('Enter new Coupon Code (e.g. FESTIVAL10):');
-                if (code) {
-                  const newC: Coupon = {
-                    code: code.toUpperCase(),
-                    discountType: 'percentage',
-                    discountValue: 10,
-                    minOrderValue: 500,
-                    maxDiscount: 150,
-                    description: 'Festival 10% discount',
-                    validUntil: '2026-12-31',
-                    active: true,
-                  };
-                  StorageService.saveCoupon(newC);
-                  setCoupons(StorageService.getCoupons());
-                  showNotification(`Coupon ${code.toUpperCase()} created!`);
-                }
-              }}
-              className="px-3.5 py-1.5 bg-magizh-800 hover:bg-magizh-900 text-white rounded-xl text-xs font-bold flex items-center gap-1"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Create Coupon</span>
-            </button>
+
+            {/* KPI Cards */}
+            {(() => {
+              let totalSkus = 0;
+              let healthyStock = 0;
+              let lowStock = 0;
+              let outOfStock = 0;
+
+              products.forEach((p) => {
+                (p.variants || []).forEach((v) => {
+                  totalSkus++;
+                  if (v.stock === 0) outOfStock++;
+                  else if (v.stock < 20) lowStock++;
+                  else healthyStock++;
+                });
+              });
+
+              return (
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
+                  <div className="bg-cream-50/60 border border-cream-200 rounded-2xl p-4">
+                    <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Total Variants</p>
+                    <p className="text-2xl font-black text-darkbrown-900 mt-1">{totalSkus}</p>
+                    <p className="text-[10px] text-gray-400 mt-0.5">Across {products.length} products</p>
+                  </div>
+                  <div className="bg-emerald-50/60 border border-emerald-200 rounded-2xl p-4">
+                    <p className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider">Optimal Stock (&ge;20)</p>
+                    <p className="text-2xl font-black text-emerald-700 mt-1">{healthyStock}</p>
+                    <p className="text-[10px] text-emerald-600 mt-0.5">Healthy supply level</p>
+                  </div>
+                  <div className="bg-amber-50/80 border border-amber-300 rounded-2xl p-4">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[11px] font-bold text-amber-900 uppercase tracking-wider">Low Stock (&lt;20)</p>
+                      <AlertTriangle className="w-4 h-4 text-amber-600" />
+                    </div>
+                    <p className="text-2xl font-black text-amber-800 mt-1">{lowStock}</p>
+                    <p className="text-[10px] text-amber-700 mt-0.5 font-bold">Needs restock attention</p>
+                  </div>
+                  <div className="bg-rose-50/80 border border-rose-300 rounded-2xl p-4">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[11px] font-bold text-rose-900 uppercase tracking-wider">Out of Stock (=0)</p>
+                      <XCircle className="w-4 h-4 text-rose-600" />
+                    </div>
+                    <p className="text-2xl font-black text-rose-700 mt-1">{outOfStock}</p>
+                    <p className="text-[10px] text-rose-700 mt-0.5 font-bold">Unavailable to order</p>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Filter & Search Bar */}
+            <div className="flex flex-col sm:flex-row gap-3 mt-5 pt-4 border-t border-cream-200">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Search by product name, SKU, or batch number..."
+                  value={inventorySearch}
+                  onChange={(e) => setInventorySearch(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 bg-cream-50/50 border border-cream-300 rounded-xl text-xs font-medium focus:bg-white focus:border-amber-700 outline-hidden transition-all"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <select
+                  value={inventoryCategory}
+                  onChange={(e) => setInventoryCategory(e.target.value)}
+                  className="px-3 py-2 bg-cream-50/50 border border-cream-300 rounded-xl text-xs font-bold text-darkbrown-800"
+                >
+                  <option value="all">All Categories</option>
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.name}>{c.name}</option>
+                  ))}
+                </select>
+
+                <div className="flex bg-cream-100 p-1 rounded-xl text-[11px] font-bold">
+                  {(['all', 'low', 'out_of_stock', 'optimal'] as const).map((filter) => (
+                    <button
+                      key={filter}
+                      onClick={() => setInventoryFilter(filter)}
+                      className={`px-3 py-1 rounded-lg uppercase transition-all ${
+                        inventoryFilter === filter
+                          ? 'bg-white text-darkbrown-900 shadow-xs'
+                          : 'text-gray-500 hover:text-darkbrown-900'
+                      }`}
+                    >
+                      {filter === 'all' ? 'All' : filter === 'low' ? 'Low (<20)' : filter === 'out_of_stock' ? 'Out of Stock' : 'Optimal'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {coupons.map((cpn) => (
-              <div
-                key={cpn.code}
-                className="p-3.5 border border-cream-300 rounded-2xl bg-cream-50/50 text-xs space-y-2"
-              >
-                <div className="flex justify-between items-center">
-                  <span className="font-mono font-extrabold text-sm text-magizh-900 bg-white px-2 py-0.5 rounded border border-magizh-300">
-                    {cpn.code}
-                  </span>
-                  <span
-                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                      cpn.active ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-200 text-gray-700'
-                    }`}
-                  >
-                    {cpn.active ? 'Active' : 'Disabled'}
-                  </span>
-                </div>
-                <p className="text-gray-700 font-bold">
-                  {cpn.discountType === 'percentage'
-                    ? `${cpn.discountValue}% OFF`
-                    : `₹${cpn.discountValue} Flat Discount`}
-                  {cpn.maxDiscount && ` up to ₹${cpn.maxDiscount}`}
-                </p>
-                <p className="text-[10px] text-gray-500">Min Order: ₹{cpn.minOrderValue} &bull; {cpn.description}</p>
-              </div>
-            ))}
+          {/* Inventory Table */}
+          <div className="bg-white rounded-3xl border border-cream-300 p-5 shadow-2xs space-y-4">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="border-b border-cream-200 text-gray-500 text-[11px] uppercase tracking-wider">
+                    <th className="pb-3 font-bold">Product &amp; Category</th>
+                    <th className="pb-3 font-bold">Variant / Weight</th>
+                    <th className="pb-3 font-bold">SKU &amp; Batch No</th>
+                    <th className="pb-3 font-bold">Price</th>
+                    <th className="pb-3 font-bold text-center">Stock Level</th>
+                    <th className="pb-3 font-bold text-right">Quick Stock Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-cream-100">
+                  {(() => {
+                    const rows: Array<{
+                      product: Product;
+                      variant: WeightVariant;
+                      variantIndex: number;
+                      batchNumber: string;
+                    }> = [];
+
+                    products.forEach((p) => {
+                      if (inventoryCategory !== 'all' && p.category !== inventoryCategory) return;
+                      (p.variants || []).forEach((v, idx) => {
+                        const batchNumber = `BATCH-2026-${v.sku || p.sku || p.id.slice(-6).toUpperCase()}`;
+                        const q = inventorySearch.toLowerCase();
+                        const matchesSearch =
+                          !q ||
+                          p.name.toLowerCase().includes(q) ||
+                          (p.tamilName && p.tamilName.toLowerCase().includes(q)) ||
+                          v.sku.toLowerCase().includes(q) ||
+                          batchNumber.toLowerCase().includes(q);
+
+                        if (!matchesSearch) return;
+
+                        if (inventoryFilter === 'low' && (v.stock >= 20 || v.stock === 0)) return;
+                        if (inventoryFilter === 'out_of_stock' && v.stock > 0) return;
+                        if (inventoryFilter === 'optimal' && v.stock < 20) return;
+
+                        rows.push({ product: p, variant: v, variantIndex: idx, batchNumber });
+                      });
+                    });
+
+                    if (rows.length === 0) {
+                      return (
+                        <tr>
+                          <td colSpan={6} className="py-12 text-center text-gray-400">
+                            <Layers className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                            <p className="font-semibold">No products matching the selected inventory filter.</p>
+                          </td>
+                        </tr>
+                      );
+                    }
+
+                    return rows.map(({ product, variant, variantIndex, batchNumber }) => {
+                      const isLow = variant.stock > 0 && variant.stock < 20;
+                      const isOut = variant.stock === 0;
+
+                      return (
+                        <tr key={`${product.id}-${variant.sku}-${variantIndex}`} className="hover:bg-cream-50/50 transition-colors">
+                          <td className="py-3 pr-4">
+                            <div className="flex items-center gap-3">
+                              <img
+                                src={product.images?.[0] || '/placeholder.png'}
+                                alt={product.name}
+                                className="w-10 h-10 rounded-xl object-cover border border-cream-200 bg-cream-50 shrink-0"
+                              />
+                              <div>
+                                <p className="font-extrabold text-darkbrown-900">{product.name}</p>
+                                {product.tamilName && (
+                                  <p className="text-[11px] text-amber-800 font-medium">{product.tamilName}</p>
+                                )}
+                                <span className="text-[10px] text-gray-500 bg-cream-100 px-1.5 py-0.5 rounded font-mono">
+                                  {product.category}
+                                </span>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="py-3 px-3 font-bold text-darkbrown-900">
+                            <span className="bg-cream-100 border border-cream-200 px-2.5 py-1 rounded-lg">
+                              {variant.weight}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 font-mono text-[11px]">
+                            <p className="font-bold text-gray-800">{variant.sku}</p>
+                            <span className="text-[10px] text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                              {batchNumber}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 font-bold text-darkbrown-900 font-mono">
+                            ₹{variant.price}
+                          </td>
+                          <td className="py-3 px-3 text-center">
+                            <div className="inline-flex flex-col items-center">
+                              <span
+                                className={`px-2.5 py-0.5 rounded-full text-[11px] font-black font-mono border ${
+                                  isOut
+                                    ? 'bg-rose-100 text-rose-800 border-rose-300'
+                                    : isLow
+                                    ? 'bg-amber-100 text-amber-800 border-amber-300'
+                                    : 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                                }`}
+                              >
+                                {variant.stock} units
+                              </span>
+                              <span className="text-[9px] text-gray-400 uppercase tracking-wider mt-0.5">
+                                {isOut ? 'Out of Stock' : isLow ? 'Low Stock' : 'In Stock'}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="py-3 pl-3 text-right">
+                            <div className="inline-flex items-center gap-1.5">
+                              <button
+                                onClick={() => handleQuickUpdateStock(product.id, variantIndex, -10)}
+                                disabled={variant.stock === 0}
+                                className="px-2 py-1 bg-cream-200 hover:bg-cream-300 text-darkbrown-900 rounded-lg font-mono font-bold text-[11px] transition-all disabled:opacity-30"
+                                title="Reduce stock by 10"
+                              >
+                                -10
+                              </button>
+                              <button
+                                onClick={() => handleQuickUpdateStock(product.id, variantIndex, 10)}
+                                className="px-2 py-1 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 rounded-lg font-mono font-bold text-[11px] transition-all"
+                                title="Add 10 units"
+                              >
+                                +10
+                              </button>
+                              <button
+                                onClick={() => {
+                                  const custom = prompt(`Enter new stock quantity for ${product.name} (${variant.weight}):`, String(variant.stock));
+                                  if (custom !== null) {
+                                    const parsed = parseInt(custom, 10);
+                                    if (!isNaN(parsed) && parsed >= 0) {
+                                      handleSetExactStock(product.id, variantIndex, parsed);
+                                    }
+                                  }
+                                }}
+                                className="px-2.5 py-1 bg-darkbrown-800 hover:bg-darkbrown-900 text-white rounded-lg font-bold text-[11px] transition-all flex items-center gap-1 shadow-2xs"
+                              >
+                                <Edit className="w-3 h-3" />
+                                <span>Edit</span>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    });
+                  })()}
+                </tbody>
+              </table>
+            </div>
           </div>
+        </div>
+      )}
+
+      {/* 8. STORE SETTINGS: COMMISSION & COUPON MANAGEMENT (Items 9 & 14) */}
+      {activeSidebarTab === 'settings' && (
+        <div className="space-y-6 animate-in fade-in">
+          {/* A. Partner Commission & Bonus Rates Settings (Item 9) */}
+          <div className="bg-white rounded-3xl border border-cream-300 p-5 sm:p-6 shadow-2xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-cream-200 pb-3">
+              <div>
+                <h2 className="text-sm sm:text-base font-extrabold text-darkbrown-900 flex items-center gap-2">
+                  <Coins className="w-4 h-4 text-amber-700" />
+                  <span>Partner Commission &amp; Bonus Rate Rules (Item 9)</span>
+                </h2>
+                <p className="text-xs text-gray-500">
+                  Configurable ecosystem commission and coin reward rates. Changes apply to new transactions; historical logs remain immutable.
+                </p>
+              </div>
+              <button
+                onClick={handleSaveCommissionSettings}
+                disabled={isSavingCommission}
+                className="px-4 py-2 bg-amber-700 hover:bg-amber-800 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-2xs disabled:opacity-50"
+              >
+                {isSavingCommission ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                <span>Save Commission Settings</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
+              <div className="p-4 bg-cream-50/50 rounded-2xl border border-cream-300 space-y-1">
+                <label className="block text-darkbrown-900 font-extrabold">Partner Commission Rate (%)</label>
+                <p className="text-[11px] text-gray-500">Default: 8% on eligible counter bill amounts</p>
+                <div className="relative mt-2">
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="1"
+                    max="50"
+                    value={commissionSettings.partnerCommissionRate}
+                    onChange={(e) =>
+                      setCommissionSettings({ ...commissionSettings, partnerCommissionRate: parseFloat(e.target.value) || 0 })
+                    }
+                    className="w-full p-2.5 bg-white border border-cream-300 rounded-xl font-bold font-mono text-darkbrown-900"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 font-bold">%</span>
+                </div>
+              </div>
+
+              <div className="p-4 bg-cream-50/50 rounded-2xl border border-cream-300 space-y-1">
+                <label className="block text-darkbrown-900 font-extrabold">Customer Reward Coins (%)</label>
+                <p className="text-[11px] text-gray-500">Default: 5% reward coins credited to customer wallet</p>
+                <div className="relative mt-2">
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="1"
+                    max="50"
+                    value={commissionSettings.customerRewardCoinsPercentage}
+                    onChange={(e) =>
+                      setCommissionSettings({ ...commissionSettings, customerRewardCoinsPercentage: parseFloat(e.target.value) || 0 })
+                    }
+                    className="w-full p-2.5 bg-white border border-cream-300 rounded-xl font-bold font-mono text-darkbrown-900"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 font-bold">%</span>
+                </div>
+              </div>
+
+              <div className="p-4 bg-cream-50/50 rounded-2xl border border-cream-300 space-y-1">
+                <label className="block text-darkbrown-900 font-extrabold">Special Bonus Multiplier</label>
+                <p className="text-[11px] text-gray-500">Default: 1.5x festival and partner promotion multiplier</p>
+                <div className="relative mt-2">
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="1.0"
+                    max="5.0"
+                    value={commissionSettings.bonusMultiplier}
+                    onChange={(e) =>
+                      setCommissionSettings({ ...commissionSettings, bonusMultiplier: parseFloat(e.target.value) || 1.0 })
+                    }
+                    className="w-full p-2.5 bg-white border border-cream-300 rounded-xl font-bold font-mono text-darkbrown-900"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 font-bold">x</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* B. Promotional Coupon Management (Item 14) */}
+          <div className="bg-white rounded-3xl border border-cream-300 p-5 sm:p-6 shadow-2xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-cream-200 pb-3">
+              <div>
+                <h2 className="text-sm sm:text-base font-extrabold text-darkbrown-900 flex items-center gap-2">
+                  <Tag className="w-4 h-4 text-darkbrown-800" />
+                  <span>Promotional Coupons &amp; Discount Management</span>
+                </h2>
+                <p className="text-xs text-gray-500">
+                  Create, edit, toggle active status, and delete promotional discount coupons. Automatically checks expiration dates.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="flex bg-cream-100 p-1 rounded-xl text-[11px] font-bold">
+                  {(['all', 'active', 'expired'] as const).map((filter) => (
+                    <button
+                      key={filter}
+                      onClick={() => setCouponFilter(filter)}
+                      className={`px-3 py-1 rounded-lg uppercase transition-all ${
+                        couponFilter === filter
+                          ? 'bg-white text-darkbrown-900 shadow-xs'
+                          : 'text-gray-500 hover:text-darkbrown-900'
+                      }`}
+                    >
+                      {filter === 'all' ? 'All' : filter === 'active' ? 'Active' : 'Expired'}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={handleOpenCreateCoupon}
+                  className="px-3.5 py-1.5 bg-magizh-800 hover:bg-magizh-900 text-white rounded-xl text-xs font-bold flex items-center gap-1 shadow-2xs transition-all"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Create Coupon</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Coupons List */}
+            {(() => {
+              const now = new Date();
+              const filteredCoupons = coupons.filter((cpn) => {
+                const isExpired = new Date(cpn.validUntil) < now;
+                if (couponFilter === 'active') return cpn.active && !isExpired;
+                if (couponFilter === 'expired') return isExpired;
+                return true;
+              });
+
+              if (filteredCoupons.length === 0) {
+                return (
+                  <div className="text-center py-10 text-gray-400 space-y-1">
+                    <Tag className="w-8 h-8 mx-auto opacity-30 text-darkbrown-400" />
+                    <p className="text-xs">No coupons matching the selected filter.</p>
+                  </div>
+                );
+              }
+
+              return (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                  {filteredCoupons.map((cpn) => {
+                    const isExpired = new Date(cpn.validUntil) < now;
+                    return (
+                      <div
+                        key={cpn.code}
+                        className={`p-4 border rounded-2xl text-xs space-y-3 transition-all ${
+                          isExpired
+                            ? 'bg-rose-50/40 border-rose-200'
+                            : cpn.active
+                            ? 'bg-cream-50/50 border-cream-300'
+                            : 'bg-gray-50 border-gray-200 opacity-70'
+                        }`}
+                      >
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <span className="font-mono font-black text-sm text-darkbrown-900 bg-white px-2.5 py-1 rounded-lg border border-cream-300 shadow-2xs">
+                              {cpn.code}
+                            </span>
+                            <p className="text-gray-700 font-extrabold text-sm mt-2">
+                              {cpn.discountType === 'percentage'
+                                ? `${cpn.discountValue}% OFF`
+                                : `₹${cpn.discountValue} Flat Discount`}
+                              {cpn.maxDiscount && (
+                                <span className="text-xs font-normal text-gray-500"> (Up to ₹{cpn.maxDiscount})</span>
+                              )}
+                            </p>
+                          </div>
+                          <span
+                            className={`text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider ${
+                              isExpired
+                                ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                                : cpn.active
+                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                : 'bg-gray-200 text-gray-700'
+                            }`}
+                          >
+                            {isExpired ? 'Expired' : cpn.active ? 'Active' : 'Disabled'}
+                          </span>
+                        </div>
+
+                        <p className="text-gray-600 text-[11px] leading-relaxed">
+                          {cpn.description}
+                        </p>
+
+                        <div className="grid grid-cols-2 gap-1 text-[10px] text-gray-500 font-medium pt-1 border-t border-cream-200">
+                          <div>Min Order: <strong className="text-darkbrown-900 font-mono">₹{cpn.minOrderValue}</strong></div>
+                          <div className="text-right">Valid Until: <strong className="text-darkbrown-900 font-mono">{cpn.validUntil}</strong></div>
+                        </div>
+
+                        {/* Actions */}
+                        <div className="flex items-center justify-between pt-2 border-t border-cream-200">
+                          <button
+                            onClick={() => handleToggleCoupon(cpn)}
+                            disabled={isExpired}
+                            className={`px-2.5 py-1 rounded-lg font-bold text-[11px] transition-all ${
+                              cpn.active
+                                ? 'bg-amber-100 hover:bg-amber-200 text-amber-900'
+                                : 'bg-emerald-100 hover:bg-emerald-200 text-emerald-900'
+                            } disabled:opacity-40`}
+                          >
+                            {cpn.active ? 'Deactivate' : 'Activate'}
+                          </button>
+
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={() => handleOpenEditCoupon(cpn)}
+                              className="px-2.5 py-1 bg-cream-200 hover:bg-cream-300 text-darkbrown-900 rounded-lg font-bold text-[11px] flex items-center gap-1 transition-all"
+                            >
+                              <Edit className="w-3 h-3" />
+                              <span>Edit</span>
+                            </button>
+                            <button
+                              onClick={() => handleDeleteCoupon(cpn.code)}
+                              className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg font-bold text-[11px] transition-all"
+                              title="Delete coupon"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* Coupon Modal Form (Create / Edit) */}
+          {isCouponModalOpen && (
+            <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+              <div className="bg-white rounded-3xl max-w-md w-full border border-cream-300 shadow-2xl p-6 space-y-4 animate-in fade-in zoom-in-95">
+                <div className="flex justify-between items-center border-b border-cream-200 pb-3">
+                  <h3 className="font-extrabold text-darkbrown-900 text-base">
+                    {editingCoupon ? `Edit Coupon: ${editingCoupon.code}` : 'Create New Promotional Coupon'}
+                  </h3>
+                  <button
+                    onClick={() => setIsCouponModalOpen(false)}
+                    className="p-1 rounded-lg hover:bg-cream-100 text-gray-500"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <form onSubmit={handleSaveCouponForm} className="space-y-3 text-xs">
+                  <div>
+                    <label className="block text-darkbrown-900 font-bold mb-1">Coupon Code (Uppercase)</label>
+                    <input
+                      type="text"
+                      required
+                      disabled={!!editingCoupon}
+                      placeholder="e.g. DIWALI20"
+                      value={couponCode}
+                      onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
+                      className="w-full p-2.5 bg-cream-50/50 border border-cream-300 rounded-xl font-mono font-bold text-darkbrown-900 disabled:opacity-50"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-darkbrown-900 font-bold mb-1">Discount Type</label>
+                      <select
+                        value={couponType}
+                        onChange={(e) => setCouponType(e.target.value as any)}
+                        className="w-full p-2.5 bg-cream-50/50 border border-cream-300 rounded-xl font-bold text-darkbrown-900"
+                      >
+                        <option value="percentage">Percentage (%)</option>
+                        <option value="fixed">Fixed Cash (₹)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-darkbrown-900 font-bold mb-1">
+                        {couponType === 'percentage' ? 'Discount %' : 'Discount Amount (₹)'}
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={couponType === 'percentage' ? 100 : 10000}
+                        required
+                        value={couponVal}
+                        onChange={(e) => setCouponVal(Number(e.target.value))}
+                        className="w-full p-2.5 bg-cream-50/50 border border-cream-300 rounded-xl font-bold font-mono text-darkbrown-900"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-darkbrown-900 font-bold mb-1">Min Order Value (₹)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={couponMinOrder}
+                        onChange={(e) => setCouponMinOrder(Number(e.target.value))}
+                        className="w-full p-2.5 bg-cream-50/50 border border-cream-300 rounded-xl font-bold font-mono text-darkbrown-900"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-darkbrown-900 font-bold mb-1">Max Cap (₹, optional)</label>
+                      <input
+                        type="number"
+                        placeholder="Optional cap"
+                        value={couponMaxDisc}
+                        onChange={(e) => setCouponMaxDisc(e.target.value)}
+                        className="w-full p-2.5 bg-cream-50/50 border border-cream-300 rounded-xl font-bold font-mono text-darkbrown-900"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-darkbrown-900 font-bold mb-1">Valid Until (YYYY-MM-DD)</label>
+                    <input
+                      type="date"
+                      required
+                      value={couponValidUntil}
+                      onChange={(e) => setCouponValidUntil(e.target.value)}
+                      className="w-full p-2.5 bg-cream-50/50 border border-cream-300 rounded-xl font-bold text-darkbrown-900"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-darkbrown-900 font-bold mb-1">Description / Banner Note</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. 10% Festive discount on traditional groceries"
+                      value={couponDesc}
+                      onChange={(e) => setCouponDesc(e.target.value)}
+                      className="w-full p-2.5 bg-cream-50/50 border border-cream-300 rounded-xl text-darkbrown-900"
+                    />
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-3 border-t border-cream-200">
+                    <button
+                      type="button"
+                      onClick={() => setIsCouponModalOpen(false)}
+                      className="px-4 py-2 bg-cream-100 hover:bg-cream-200 text-darkbrown-900 rounded-xl font-bold transition-all"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white rounded-xl font-bold shadow-xs transition-all flex items-center gap-1.5"
+                    >
+                      <Save className="w-3.5 h-3.5" />
+                      <span>{editingCoupon ? 'Update Coupon' : 'Create Coupon'}</span>
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

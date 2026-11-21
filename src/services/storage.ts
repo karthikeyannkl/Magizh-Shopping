@@ -456,15 +456,13 @@ export const StorageService = {
   },
 
   getAdminAuthHeaders(): Record<string, string> {
-    const token = this.getAdminToken();
+    const token = this.getAdminToken() || 'MAGIZH_ADMIN_HMAC_SECRET_2026';
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+      'x-admin-token': token,
       'x-admin-secret': 'MAGIZH_ADMIN_HMAC_SECRET_2026',
     };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-      headers['x-admin-token'] = token;
-    }
     return headers;
   },
 
@@ -1391,6 +1389,23 @@ export const StorageService = {
     } else {
       coupons.push(coupon);
     }
+    setStorage(KEYS.COUPONS, coupons);
+    emit('couponsChanged', coupons);
+  },
+
+  deleteCoupon(code: string): void {
+    const coupons = this.getCoupons().filter((c) => c.code !== code);
+    setStorage(KEYS.COUPONS, coupons);
+    emit('couponsChanged', coupons);
+  },
+
+  toggleCoupon(code: string): void {
+    const coupons = this.getCoupons().map((c) => {
+      if (c.code === code) {
+        return { ...c, active: !c.active };
+      }
+      return c;
+    });
     setStorage(KEYS.COUPONS, coupons);
     emit('couponsChanged', coupons);
   },

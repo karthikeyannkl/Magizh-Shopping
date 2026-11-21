@@ -25,15 +25,28 @@ interface OrderHistoryAndTrackingProps {
   selectedOrderId?: string;
 }
 
-const ORDER_STATUS_STEPS: OrderStatus[] = [
-  'Confirmed',
-  'Processing',
-  'Packed',
-  'Shipped',
-  'Out for Delivery',
-  'Delivered',
-  'Completed',
+interface TrackingStage {
+  id: string;
+  label: string;
+  description: string;
+}
+
+const TRACKING_STAGES: TrackingStage[] = [
+  { id: 'confirmed', label: 'Order Confirmed', description: 'Order registered' },
+  { id: 'payment_verified', label: 'Payment Verified', description: 'Payment confirmed' },
+  { id: 'processing', label: 'Processing & Packed', description: 'Packed for delivery' },
+  { id: 'delivery', label: 'Shipped & In Transit', description: 'Out for delivery' },
+  { id: 'delivered', label: 'Delivered', description: 'Delivered safely' },
 ];
+
+function getStageIndex(order: Order): number {
+  if (order.orderStatus === 'Cancelled') return -1;
+  if (order.orderStatus === 'Delivered' || order.orderStatus === 'Completed') return 4;
+  if (order.orderStatus === 'Shipped' || order.orderStatus === 'Out for Delivery') return 3;
+  if (order.orderStatus === 'Processing' || order.orderStatus === 'Packed') return 2;
+  if (order.paymentStatus === 'Paid' || (order.paymentStatus as any) === 'VERIFIED') return 1;
+  return 0; // Confirmed
+}
 
 export const OrderHistoryAndTracking: React.FC<OrderHistoryAndTrackingProps> = ({
   onContinueShopping,
@@ -64,8 +77,8 @@ export const OrderHistoryAndTracking: React.FC<OrderHistoryAndTrackingProps> = (
   const fetchCustomerOrders = async () => {
     if (!currentUser.id || currentUser.isGuest) return;
     try {
-      const url = `/api/orders?customerId=${encodeURIComponent(currentUser.id)}&mobile=${encodeURIComponent(currentUser.mobile || '')}`;
-      const res = await fetch(url);
+      const url = `/api/orders?customerId=${encodeURIComponent(currentUser.id)}&mobile=${encodeURIComponent(currentUser.mobile || '')}&_t=${Date.now()}`;
+      const res = await fetch(url, { cache: 'no-store' });
       if (res.ok) {
         const data = await res.json();
         if (data.success && Array.isArray(data.orders)) {
@@ -100,33 +113,6 @@ export const OrderHistoryAndTracking: React.FC<OrderHistoryAndTrackingProps> = (
     });
     return () => unsub();
   }, [currentUser.id, currentUser.mobile]);
-
-  const handleCancelOrder = (order: Order) => {
-    if (order.orderStatus === 'Cancelled') return;
-
-    if (!confirm(`Are you sure you want to cancel Order #${order.orderNumber}? Any redeemed B5 Coins will be reversed to your balance.`)) {
-      return;
-    }
-
-    // Update order status to Cancelled
-    const updatedOrder = StorageService.updateOrderStatus(
-      order.id,
-      'Cancelled',
-      'Cancelled by customer. Initiated coin reversal.'
-    );
-
-    if (updatedOrder) {
-      // Process coin reversal
-      const coinAccount = StorageService.getCoinAccount(currentUser.id);
-      const reversalResult = processOrderCancellationReversal(coinAccount, updatedOrder);
-
-      StorageService.saveCoinAccount(reversalResult.updatedAccount);
-      reversalResult.transactions.forEach((tx) => StorageService.recordCoinTransaction(tx));
-
-      setActionNotice(`Order #${order.orderNumber} Cancelled. Reversed ${order.coinsRedeemed} B5 Coins to wallet.`);
-      setTimeout(() => setActionNotice(null), 4000);
-    }
-  };
 
   const getStatusBadge = (status: OrderStatus) => {
     switch (status) {
@@ -185,7 +171,8 @@ export const OrderHistoryAndTracking: React.FC<OrderHistoryAndTrackingProps> = (
         <div className="space-y-4">
           {orders.map((order) => {
             const isExpanded = expandedOrderId === order.id;
-            const currentStepIdx = ORDER_STATUS_STEPS.indexOf(order.orderStatus);
+            const currentStageIdx = getStageIndex(order);
+            const isCancelled = order.orderStatus === 'Cancelled';
 
             return (
               <div
@@ -238,31 +225,47 @@ export const OrderHistoryAndTracking: React.FC<OrderHistoryAndTrackingProps> = (
                 {/* Expanded Details */}
                 {isExpanded && (
                   <div className="p-4 sm:p-6 border-t border-cream-200 space-y-6 animate-in fade-in">
-                    {/* Live Tracking Visual Stepper */}
-                    {order.orderStatus !== 'Cancelled' && (
+                    {/* Live Tracking Visual Stepper (Synchronized with Admin) */}
+                    {isCancelled ? (
+                      <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 text-xs text-rose-900 flex items-center gap-3">
+                        <XCircle className="w-6 h-6 text-rose-600 shrink-0" />
+                        <div>
+                          <span className="font-black text-sm block text-rose-950">Order Cancelled by Magizh Store</span>
+                          <p className="text-[11px] text-rose-800 mt-0.5">
+                            This order was cancelled by Administrator. Any redeemed B5 coins have been reversed back into your wallet balance.
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
                       <div className="bg-cream-50/80 p-4 rounded-2xl border border-cream-200">
-                        <h4 className="text-xs font-extrabold text-darkbrown-900 uppercase tracking-tight mb-3">
-                          Live Shipment Tracking
-                        </h4>
+                        <div className="flex items-center justify-between mb-3">
+                          <h4 className="text-xs font-extrabold text-darkbrown-900 uppercase tracking-tight flex items-center gap-1.5">
+                            <Truck className="w-4 h-4 text-magizh-800" />
+                            <span>Live Order &amp; Delivery Tracking</span>
+                          </h4>
+                          <span className="text-[11px] font-bold text-magizh-800 bg-white px-2.5 py-0.5 rounded-full border border-cream-300">
+                            Current Status: {order.orderStatus}
+                          </span>
+                        </div>
 
-                        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2 text-center text-[10px]">
-                          {ORDER_STATUS_STEPS.map((step, idx) => {
-                            const isDone = currentStepIdx >= idx;
-                            const isCurrent = order.orderStatus === step;
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2 text-center text-[10px]">
+                          {TRACKING_STAGES.map((stg, idx) => {
+                            const isDone = currentStageIdx >= idx;
+                            const isCurrent = currentStageIdx === idx;
 
                             return (
-                              <div key={step} className="flex flex-col items-center">
+                              <div key={stg.id} className="flex flex-col items-center">
                                 <div
-                                  className={`w-6 h-6 rounded-full flex items-center justify-center font-bold mb-1 transition-all ${
+                                  className={`w-7 h-7 rounded-full flex items-center justify-center font-bold mb-1 transition-all ${
                                     isDone
-                                      ? 'bg-magizh-700 text-white shadow-sm'
-                                      : 'bg-cream-300 text-gray-500'
-                                  } ${isCurrent ? 'ring-4 ring-magizh-200 scale-110' : ''}`}
+                                      ? 'bg-magizh-800 text-white shadow-sm'
+                                      : 'bg-cream-200 text-gray-400'
+                                  } ${isCurrent ? 'ring-4 ring-magizh-300 scale-110 font-black' : ''}`}
                                 >
                                   {isDone ? '✓' : idx + 1}
                                 </div>
                                 <span
-                                  className={`leading-tight ${
+                                  className={`leading-tight block ${
                                     isCurrent
                                       ? 'font-black text-magizh-900'
                                       : isDone
@@ -270,7 +273,10 @@ export const OrderHistoryAndTracking: React.FC<OrderHistoryAndTrackingProps> = (
                                       : 'text-gray-400'
                                   }`}
                                 >
-                                  {step}
+                                  {stg.label}
+                                </span>
+                                <span className="text-[9px] text-gray-400 hidden sm:block mt-0.5">
+                                  {stg.description}
                                 </span>
                               </div>
                             );
@@ -369,20 +375,6 @@ export const OrderHistoryAndTracking: React.FC<OrderHistoryAndTrackingProps> = (
                         {order.rewardCoinsCredited ? 'Credited' : 'Pending'}
                       </span>
                     </div>
-
-                    {/* Cancellation Action */}
-                    {order.orderStatus !== 'Cancelled' && order.orderStatus !== 'Completed' && (
-                      <div className="pt-2 flex justify-end">
-                        <button
-                          type="button"
-                          onClick={() => handleCancelOrder(order)}
-                          className="px-3 py-1.5 border border-red-300 text-red-700 hover:bg-red-50 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
-                        >
-                          <XCircle className="w-4 h-4" />
-                          <span>Cancel Order & Reverse Coins</span>
-                        </button>
-                      </div>
-                    )}
                   </div>
                 )}
               </div>

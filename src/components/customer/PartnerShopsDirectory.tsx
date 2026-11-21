@@ -54,6 +54,30 @@ export const PartnerShopsDirectory: React.FC<PartnerShopsDirectoryProps> = ({ on
   const [billAmount, setBillAmount] = useState<number>(500);
   const [coinsToRedeem, setCoinsToRedeem] = useState<number>(0);
 
+  // Store View Modal & Purchase History State
+  const [selectedStoreModal, setSelectedStoreModal] = useState<PartnerShop | null>(null);
+  const [directoryViewMode, setDirectoryViewMode] = useState<'shops' | 'history'>('shops');
+  const [pastBills, setPastBills] = useState<PartnerBill[]>([]);
+
+  const fetchPastBills = async () => {
+    if (!currentUser || !currentUser.id || currentUser.isGuest) return;
+    try {
+      const res = await fetch(
+        `/api/customer/all-bills?customerId=${encodeURIComponent(currentUser.id)}&mobile=${encodeURIComponent(
+          currentUser.mobile || ''
+        )}&_t=${Date.now()}`,
+        { cache: 'no-store' }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.bills)) {
+          const completed = data.bills.filter((b: PartnerBill) => b.status === 'COMPLETED');
+          setPastBills(completed);
+        }
+      }
+    } catch {}
+  };
+
   // Fetch pending bills for this customer from authoritative backend
   const fetchPendingBills = async () => {
     if (!currentUser || !currentUser.id || currentUser.isGuest) {
@@ -122,6 +146,7 @@ export const PartnerShopsDirectory: React.FC<PartnerShopsDirectoryProps> = ({ on
   useEffect(() => {
     // Initial fetch
     fetchPendingBills();
+    fetchPastBills();
 
     // Poll every 2.5 seconds for instant status synchronization
     const interval = setInterval(fetchPendingBills, 2500);
@@ -905,95 +930,218 @@ export const PartnerShopsDirectory: React.FC<PartnerShopsDirectoryProps> = ({ on
         </div>
       )}
 
-      {/* Partner Shops List */}
-      <div className="space-y-4">
-        <div className="flex justify-between items-center px-1">
-          <h2 className="text-sm font-extrabold text-darkbrown-900">
-            Approved Stores Near You ({filteredPartners.length})
-          </h2>
-          <button
-            onClick={onBackToShopping}
-            className="text-xs font-bold text-magizh-800 hover:underline"
-          >
-            &larr; Return to Online Shopping
-          </button>
-        </div>
+      {/* DIRECTORY VIEW MODE TABS: BROWSE STORES vs PURCHASE HISTORY */}
+      <div className="flex items-center gap-2 border-b border-cream-200 pb-3">
+        <button
+          onClick={() => setDirectoryViewMode('shops')}
+          className={`px-4 py-2.5 rounded-2xl text-xs font-black transition-all flex items-center gap-2 ${
+            directoryViewMode === 'shops'
+              ? 'bg-magizh-900 text-white shadow-md'
+              : 'bg-white text-gray-700 border border-cream-300 hover:bg-cream-50'
+          }`}
+        >
+          <Store className="w-4 h-4 text-b5-400" />
+          <span>Browse Partner Stores ({filteredPartners.length})</span>
+        </button>
 
-        {filteredPartners.length === 0 ? (
-          <div className="bg-white rounded-2xl border border-cream-300 p-8 text-center text-xs text-gray-500">
-            No partner shops found matching your search.
+        <button
+          onClick={() => {
+            setDirectoryViewMode('history');
+            fetchPastBills();
+          }}
+          className={`px-4 py-2.5 rounded-2xl text-xs font-black transition-all flex items-center gap-2 ${
+            directoryViewMode === 'history'
+              ? 'bg-magizh-900 text-white shadow-md'
+              : 'bg-white text-gray-700 border border-cream-300 hover:bg-cream-50'
+          }`}
+        >
+          <Receipt className="w-4 h-4 text-b5-400" />
+          <span>My In-Store Purchase History ({pastBills.length})</span>
+        </button>
+      </div>
+
+      {/* VIEW MODE 1: PARTNER SHOPS DIRECTORY */}
+      {directoryViewMode === 'shops' ? (
+        <div className="space-y-4">
+          <div className="flex justify-between items-center px-1">
+            <h2 className="text-sm font-extrabold text-darkbrown-900">
+              Approved Stores Near You ({filteredPartners.length})
+            </h2>
+            <button
+              onClick={onBackToShopping}
+              className="text-xs font-bold text-magizh-800 hover:underline"
+            >
+              &larr; Return to Online Shopping
+            </button>
           </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {filteredPartners.map((shop) => (
-              <div
-                key={shop.id}
-                className="bg-white rounded-3xl border border-cream-300 hover:border-magizh-500/50 p-5 shadow-2xs hover:shadow-soft transition-all space-y-3 flex flex-col justify-between"
-              >
-                <div>
-                  <div className="flex items-start justify-between gap-2">
+
+          {filteredPartners.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-cream-300 p-8 text-center text-xs text-gray-500">
+              No partner shops found matching your search.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {filteredPartners.map((shop) => (
+                <div
+                  key={shop.id}
+                  className="bg-white rounded-3xl border border-cream-300 hover:border-magizh-500/50 p-5 shadow-2xs hover:shadow-soft transition-all space-y-3 flex flex-col justify-between"
+                >
+                  <div>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-900 flex items-center justify-center font-bold shrink-0">
+                          <Store className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h3 className="font-extrabold text-sm text-darkbrown-900 leading-tight">
+                            {shop.shopName}
+                          </h3>
+                          <span className="font-mono text-[10px] text-gray-500 font-bold">
+                            Partner ID: {shop.partnerCode}
+                          </span>
+                        </div>
+                      </div>
+                      <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0">
+                        Approved Store
+                      </span>
+                    </div>
+
+                    <p className="text-xs text-gray-600 mt-2 flex items-start gap-1.5">
+                      <MapPin className="w-4 h-4 text-magizh-700 shrink-0 mt-0.5" />
+                      <span>{shop.address}, {shop.district} - <strong>{shop.pinCode}</strong></span>
+                    </p>
+
+                    <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
+                      <span className="bg-b5-50 text-b5-800 border border-b5-200 px-2 py-0.5 rounded-lg font-bold">
+                        Redeem up to {shop.partnerRedemptionCapPercentage || 50}% Coins
+                      </span>
+                      <span className="bg-amber-50 text-amber-900 border border-amber-200 px-2 py-0.5 rounded-lg font-bold flex items-center gap-1">
+                        <Sparkles className="w-3 h-3 text-amber-600" />
+                        {shop.specialCoinBonusMultiplier || 1.5}x Coin Bonus
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="pt-3 border-t border-cream-200 flex items-center justify-between gap-3">
+                    <div className="text-[11px] text-gray-500 flex items-center gap-1">
+                      <Phone className="w-3.5 h-3.5 text-gray-400" />
+                      <span>+91 {shop.mobile}</span>
+                    </div>
+
+                    {/* View Store Option (Coin Collector replaced with View Store Details) */}
+                    <button
+                      onClick={() => setSelectedStoreModal(shop)}
+                      className="px-4 py-2 bg-gradient-to-r from-magizh-800 to-magizh-900 hover:from-magizh-900 hover:to-black text-white rounded-xl text-xs font-black shadow-sm transition-all flex items-center gap-1.5"
+                    >
+                      <Store className="w-3.5 h-3.5 text-b5-400" />
+                      <span>View Store Details</span>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        /* VIEW MODE 2: CUSTOMER IN-STORE PURCHASE HISTORY */
+        <div className="space-y-4">
+          <div className="flex justify-between items-center px-1">
+            <div>
+              <h2 className="text-sm font-extrabold text-darkbrown-900 flex items-center gap-2">
+                <Receipt className="w-4 h-4 text-emerald-700" />
+                <span>My In-Store Purchase History ({pastBills.length})</span>
+              </h2>
+              <p className="text-xs text-gray-500">
+                Permanent ledger of all your completed in-store partner purchases and B5 Coin savings.
+              </p>
+            </div>
+            <button
+              onClick={() => setDirectoryViewMode('shops')}
+              className="text-xs font-bold text-magizh-800 hover:underline"
+            >
+              &larr; Back to Stores Directory
+            </button>
+          </div>
+
+          {pastBills.length === 0 ? (
+            <div className="bg-white rounded-3xl border border-cream-300 p-8 text-center text-xs text-gray-500 space-y-2">
+              <Store className="w-10 h-10 text-gray-300 mx-auto" />
+              <p className="font-bold text-darkbrown-900">No in-store purchases recorded yet</p>
+              <p className="text-[11px]">When you shop at any Magizh Partner store, your verified bills and receipts will be permanently archived here.</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {pastBills.map((b) => (
+                <div
+                  key={b.id}
+                  className="bg-white rounded-2xl border border-cream-300 p-4 shadow-2xs space-y-3 text-xs hover:border-emerald-300 transition-all"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-cream-200 pb-2.5">
                     <div className="flex items-center gap-2.5">
-                      <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-900 flex items-center justify-center font-bold shrink-0">
-                        <Store className="w-5 h-5" />
+                      <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold">
+                        <Store className="w-4 h-4" />
                       </div>
                       <div>
-                        <h3 className="font-extrabold text-sm text-darkbrown-900 leading-tight">
-                          {shop.shopName}
-                        </h3>
-                        <span className="font-mono text-[10px] text-gray-500 font-bold">
-                          Partner ID: {shop.partnerCode}
+                        <span className="font-extrabold text-sm text-darkbrown-900 block">
+                          {b.partnerName}
+                        </span>
+                        <span className="font-mono text-[11px] text-gray-500">
+                          Bill #{b.billNumber} &bull; {new Date(b.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })} at {new Date(b.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </span>
                       </div>
                     </div>
-                    <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0">
-                      Approved Store
+
+                    <span className="px-2.5 py-1 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>{b.receiptNumber || 'Verified Receipt'}</span>
                     </span>
                   </div>
 
-                  <p className="text-xs text-gray-600 mt-2 flex items-start gap-1.5">
-                    <MapPin className="w-4 h-4 text-magizh-700 shrink-0 mt-0.5" />
-                    <span>{shop.address}, {shop.district} - <strong>{shop.pinCode}</strong></span>
-                  </p>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 bg-cream-50 p-3 rounded-xl border border-cream-200">
+                    <div>
+                      <span className="text-[10px] text-gray-500 block">Original Bill</span>
+                      <span className="text-xs font-black text-darkbrown-900">₹{b.originalBillAmount || b.billAmount}</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-b5-700 block font-bold">Coins Redeemed</span>
+                      <span className="text-xs font-black text-b5-700">-{b.coinsToRedeem} B5 Coins</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-emerald-700 block font-bold">Paid at Store</span>
+                      <span className="text-sm font-black text-emerald-800">₹{b.payableAmount}</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-gray-500 block">Payment Mode</span>
+                      <span className="text-xs font-black uppercase text-darkbrown-900">{b.paymentMethod || 'COUNTER'}</span>
+                    </div>
+                  </div>
 
-                  <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
-                    <span className="bg-b5-50 text-b5-800 border border-b5-200 px-2 py-0.5 rounded-lg font-bold">
-                      Redeem up to {shop.partnerRedemptionCapPercentage || 50}% Coins
+                  <div className="flex justify-between items-center pt-1">
+                    <span className="text-[11px] text-gray-500">
+                      Payment verified and closed by cashier.
                     </span>
-                    <span className="bg-amber-50 text-amber-900 border border-amber-200 px-2 py-0.5 rounded-lg font-bold flex items-center gap-1">
-                      <Sparkles className="w-3 h-3 text-amber-600" />
-                      {shop.specialCoinBonusMultiplier || 1.5}x Coin Bonus
-                    </span>
+                    <button
+                      onClick={() => setCompletedBillReceipt(b)}
+                      className="px-4 py-1.5 bg-emerald-800 hover:bg-emerald-900 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
+                    >
+                      <Receipt className="w-3.5 h-3.5 text-emerald-300" />
+                      <span>View Store Receipt</span>
+                    </button>
                   </div>
                 </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
-                <div className="pt-3 border-t border-cream-200 flex items-center justify-between gap-3">
-                  <div className="text-[11px] text-gray-500 flex items-center gap-1">
-                    <Phone className="w-3.5 h-3.5 text-gray-400" />
-                    <span>+91 {shop.mobile}</span>
-                  </div>
-
-                  <button
-                    onClick={() => handleOpenCalculator(shop)}
-                    className="px-4 py-2 bg-gradient-to-r from-b5-600 to-b5-700 hover:from-b5-700 hover:to-b5-800 text-white rounded-xl text-xs font-black shadow-sm transition-all flex items-center gap-1.5"
-                  >
-                    <Coins className="w-3.5 h-3.5" />
-                    <span>Coin Calculator</span>
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* In-Store Coin Calculator Modal */}
-      {activeShopForPay && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-darkbrown-950/70 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-white rounded-3xl shadow-2xl border border-cream-300 w-full max-w-lg overflow-hidden animate-in zoom-in-95">
-            {/* Header */}
-            <div className="bg-gradient-to-r from-magizh-900 to-magizh-800 text-white p-5 relative">
+      {/* MODAL: VIEW STORE DETAILS MODAL */}
+      {selectedStoreModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-darkbrown-950/75 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white rounded-3xl shadow-2xl border border-cream-300 w-full max-w-lg overflow-hidden animate-in zoom-in-95 max-h-[90vh] overflow-y-auto">
+            <div className="bg-gradient-to-r from-magizh-900 via-magizh-800 to-darkbrown-900 text-white p-5 relative">
               <button
-                onClick={() => setActiveShopForPay(null)}
+                onClick={() => setSelectedStoreModal(null)}
                 className="absolute top-4 right-4 text-cream-200 hover:text-white p-1 rounded-full hover:bg-white/10"
               >
                 <X className="w-5 h-5" />
@@ -1001,114 +1149,94 @@ export const PartnerShopsDirectory: React.FC<PartnerShopsDirectoryProps> = ({ on
               <div className="flex items-center gap-2">
                 <Store className="w-4 h-4 text-b5-400" />
                 <span className="text-[10px] font-bold uppercase tracking-wider text-b5-300">
-                  Store Coin Discount Calculator
+                  Authorized Partner Franchise Store
                 </span>
               </div>
-              <h3 className="text-lg font-black mt-1">{activeShopForPay.shopName}</h3>
+              <h3 className="text-xl font-black mt-1">{selectedStoreModal.shopName}</h3>
               <p className="text-xs text-cream-200">
-                Partner Code: {activeShopForPay.partnerCode} &bull; {activeShopForPay.district}
+                Partner Code: {selectedStoreModal.partnerCode} &bull; {selectedStoreModal.district}
               </p>
             </div>
 
             <div className="p-5 space-y-4 text-xs">
-              <div>
-                <label className="block font-bold text-darkbrown-900 mb-1">
-                  Estimated Purchase Amount (₹)
-                </label>
-                <input
-                  type="number"
-                  min={10}
-                  value={billAmount}
-                  onChange={(e) => handleBillAmountChange(Math.max(1, Number(e.target.value)))}
-                  className="w-full p-2.5 border border-cream-300 rounded-xl text-base font-black font-mono focus:ring-2 focus:ring-magizh-600 focus:outline-none"
-                  required
-                />
-              </div>
-
-              {/* Cap Details Card */}
-              <div className="bg-gradient-to-br from-b5-50 to-amber-50 p-3.5 rounded-2xl border border-b5-200 space-y-2">
-                <div className="flex justify-between items-center text-[11px]">
-                  <span className="text-gray-600">Store Redemption Cap:</span>
-                  <span className="font-extrabold text-b5-900 font-mono">{partnerCapPercent}% Maximum</span>
-                </div>
-                <div className="flex justify-between items-center text-[11px]">
-                  <span className="text-gray-600">Maximum Coins Permitted (Cap Limit):</span>
-                  <span className="font-black text-darkbrown-900 font-mono">₹{maxCapAmount}</span>
-                </div>
-                <div className="flex justify-between items-center text-[11px] pt-1 border-t border-b5-200/60">
-                  <span className="font-bold text-darkbrown-900">Your Spendable Coin Limit:</span>
-                  <span className="font-black text-emerald-800 font-mono">
-                    {maxSpendableCoins} B5 Coins (= ₹{maxSpendableCoins})
-                  </span>
+              {/* Store Photo / Showcase Banner */}
+              <div className="relative rounded-2xl overflow-hidden bg-gradient-to-br from-emerald-900 to-darkbrown-900 h-36 flex items-center justify-center text-white border border-cream-300 shadow-inner">
+                <div className="text-center space-y-1">
+                  <div className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center mx-auto shadow-md">
+                    <Store className="w-6 h-6 text-emerald-300" />
+                  </div>
+                  <h4 className="font-extrabold text-sm">{selectedStoreModal.shopName}</h4>
+                  <p className="text-[11px] text-cream-200">Traditional Organic Millets, Oils &amp; Authentic Groceries</p>
                 </div>
               </div>
 
-              {/* Coin Slider */}
-              {maxSpendableCoins > 0 ? (
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center">
-                    <span className="font-bold text-darkbrown-900">Coins to Redeem:</span>
-                    <span className="font-black text-b5-700 font-mono text-sm">
-                      {coinsToRedeem} B5
+              {/* Store Address & Contact */}
+              <div className="bg-cream-50 p-4 rounded-2xl border border-cream-200 space-y-2.5">
+                <div className="flex items-start gap-2 text-darkbrown-900">
+                  <MapPin className="w-4 h-4 text-magizh-700 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-bold block">Store Location &amp; Address:</span>
+                    <p className="text-gray-600 mt-0.5 leading-relaxed">
+                      {selectedStoreModal.address}, {selectedStoreModal.district} - <strong>{selectedStoreModal.pinCode}</strong>
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between pt-2 border-t border-cream-200">
+                  <div className="flex items-center gap-2">
+                    <Phone className="w-4 h-4 text-emerald-700" />
+                    <span className="font-bold text-darkbrown-900">+91 {selectedStoreModal.mobile}</span>
+                  </div>
+                  <a
+                    href={`tel:+91${selectedStoreModal.mobile}`}
+                    className="px-3 py-1 bg-emerald-800 text-white rounded-lg text-[11px] font-bold hover:bg-emerald-900"
+                  >
+                    Call Store
+                  </a>
+                </div>
+              </div>
+
+              {/* B5 Coin Privilege Info */}
+              <div className="bg-gradient-to-br from-b5-50 to-amber-50 p-4 rounded-2xl border border-b5-200 space-y-2">
+                <h4 className="font-black text-darkbrown-900 uppercase text-[11px] flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-b5-600" />
+                  <span>B5 Coin Benefits at this Store:</span>
+                </h4>
+                <div className="grid grid-cols-2 gap-2 text-[11px]">
+                  <div className="bg-white p-2.5 rounded-xl border border-b5-200">
+                    <span className="text-gray-500 block text-[10px]">Redemption Cap</span>
+                    <span className="font-black text-b5-900 text-sm">Up to {selectedStoreModal.partnerRedemptionCapPercentage || 50}%</span>
+                    <span className="text-[9px] text-gray-500 block">Use B5 Coins for up to half bill</span>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-xl border border-b5-200">
+                    <span className="text-gray-500 block text-[10px]">Bonus Multiplier</span>
+                    <span className="font-black text-amber-900 text-sm">{selectedStoreModal.specialCoinBonusMultiplier || 1.5}x Multiplier</span>
+                    <span className="text-[9px] text-gray-500 block">Earn extra coins on visits</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* In-Store Available Items / Highlights */}
+              <div className="border border-cream-200 p-3.5 rounded-2xl space-y-1.5">
+                <span className="font-bold text-darkbrown-900 block text-[11px]">In-Store Products &amp; Offerings:</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {['Pure Stone-Ground Podi', 'Cold-Pressed Groundnut Oil', 'Foxtail Millet Noodles', 'A2 Desi Cow Ghee', 'Traditional Palm Jaggery', 'Native Health Mixes'].map((item, idx) => (
+                    <span key={idx} className="bg-cream-100 text-darkbrown-800 text-[10px] font-medium px-2 py-0.5 rounded-md">
+                      {item}
                     </span>
-                  </div>
-
-                  <input
-                    type="range"
-                    min={0}
-                    max={maxSpendableCoins}
-                    value={coinsToRedeem}
-                    onChange={(e) => setCoinsToRedeem(Number(e.target.value))}
-                    className="w-full accent-b5-600 cursor-pointer"
-                  />
-
-                  <div className="flex justify-between text-[11px] text-gray-500 font-mono">
-                    <span>0 Coins</span>
-                    <button
-                      type="button"
-                      onClick={() => setCoinsToRedeem(maxSpendableCoins)}
-                      className="text-b5-700 font-bold hover:underline"
-                    >
-                      Use Max ({maxSpendableCoins})
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <p className="text-[11px] text-amber-800 bg-amber-50 p-2.5 rounded-xl border border-amber-200">
-                  You have 0 B5 Coins available to redeem for this purchase.
-                </p>
-              )}
-
-              {/* Final Bill Breakdown */}
-              <div className="p-3 bg-cream-50 rounded-2xl border border-cream-200 space-y-1.5">
-                <div className="flex justify-between text-gray-600">
-                  <span>Purchase Subtotal:</span>
-                  <span>₹{billAmount}</span>
-                </div>
-                <div className="flex justify-between text-b5-700 font-bold">
-                  <span>B5 Coins Discount:</span>
-                  <span>-₹{coinsToRedeem}</span>
-                </div>
-                <div className="flex justify-between text-sm font-black text-magizh-900 pt-1 border-t border-cream-300">
-                  <span>Remaining Amount to Pay at Counter:</span>
-                  <span>₹{Math.max(0, billAmount - coinsToRedeem)}</span>
+                  ))}
                 </div>
               </div>
 
-              <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl text-amber-900">
-                <p className="font-bold text-[11px]">How In-Store Billing Works:</p>
-                <p className="text-[10px] text-amber-800 mt-0.5">
-                  Give your mobile number or Customer ID to the store cashier. The cashier will generate the bill with your coin discount. It will instantly appear here for your confirmation and payment.
-                </p>
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedStoreModal(null)}
+                  className="w-full py-2.5 bg-magizh-900 hover:bg-black text-white font-bold rounded-xl text-xs"
+                >
+                  Close Store Details
+                </button>
               </div>
-
-              <button
-                type="button"
-                onClick={() => setActiveShopForPay(null)}
-                className="w-full py-2.5 bg-magizh-800 hover:bg-magizh-900 text-white rounded-xl text-xs font-bold transition-all"
-              >
-                Done
-              </button>
             </div>
           </div>
         </div>

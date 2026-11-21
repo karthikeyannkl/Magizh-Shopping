@@ -32,9 +32,11 @@ import {
   BadgeCheck,
   Send,
   AlertCircle,
+  Menu,
 } from 'lucide-react';
 import { StorageService, subscribe } from '../../services/storage';
 import { PartnerShop, Order, Product, User, PartnerLocalTransaction, PartnerBill } from '../../types';
+import { PartnerSidebar, PartnerTab } from './PartnerSidebar';
 
 export const PartnerDashboard: React.FC = () => {
   // Safe resolution of partner user and shop
@@ -86,8 +88,9 @@ export const PartnerDashboard: React.FC = () => {
     StorageService.getPartnerLocalTransactions(activePartner?.id || 'ptr-1')
   );
 
-  type TabType = 'overview' | 'billing' | 'pending' | 'history' | 'settings' | 'orders' | 'inventory' | 'monthlyCoinReport';
-  const [activeTab, setActiveTab] = useState<TabType>('overview');
+  type TabType = PartnerTab;
+  const [activeTab, setActiveTab] = useState<PartnerTab>('overview');
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
   const [selectedMonth, setSelectedMonth] = useState<string>(() => new Date().toISOString().slice(0, 7));
 
@@ -684,190 +687,146 @@ export const PartnerDashboard: React.FC = () => {
   }, [monthCompletedBills, partnerBonusMultiplier, selectedMonth]);
 
   return (
-    <div className="max-w-6xl mx-auto px-3 sm:px-6 py-4 pb-28 space-y-6">
-      {/* 1. Partner Header Strip (Section 2) */}
-      <div className="bg-gradient-to-r from-blue-950 via-slate-900 to-blue-900 text-white rounded-3xl p-5 sm:p-6 shadow-card border border-blue-800/60">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-start sm:items-center gap-3.5">
-            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white border border-blue-400/30 shrink-0 shadow-inner">
-              <Store className="w-7 h-7 text-amber-300" />
-            </div>
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h1 className="text-lg sm:text-2xl font-black tracking-tight text-white">{activePartner.shopName}</h1>
-                <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-400/40">
-                  {activePartner.status}
-                </span>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-200 border border-blue-400/30">
-                  {activePartner.storeCategory || 'Organic Groceries'}
-                </span>
-              </div>
-              <p className="text-xs text-blue-200 mt-1">
-                Store ID: <span className="font-mono font-bold text-white bg-white/10 px-1.5 py-0.5 rounded">{activePartner.partnerCode || activePartner.id}</span>
-                <span className="mx-2">&bull;</span>
-                Owner: <span className="font-semibold text-white">{activePartner.ownerName}</span>
-                <span className="mx-2">&bull;</span>
-                Phone: <span className="font-mono">{activePartner.mobile}</span>
-              </p>
-              <p className="text-[11px] text-blue-300/80 mt-0.5 flex items-center gap-1">
-                <MapPin className="w-3 h-3 shrink-0 text-amber-400" />
-                <span>{activePartner.address}, {activePartner.district} - {activePartner.pinCode}</span>
-              </p>
-            </div>
+    <div className="min-h-screen bg-cream-50/60 flex flex-col lg:flex-row">
+      {/* Left Sidebar Navigation (Desktop Fixed + Mobile Collapsible Drawer) */}
+      <PartnerSidebar
+        activeTab={activeTab}
+        onSelectTab={(tab) => setActiveTab(tab)}
+        isOpenMobile={isMobileSidebarOpen}
+        onCloseMobile={() => setIsMobileSidebarOpen(false)}
+        currentShop={activePartner}
+        pendingBillsCount={pendingBills.length}
+        onLogout={handlePartnerLogout}
+      />
+
+      {/* Main Partner Content Area */}
+      <div className="flex-1 min-w-0 p-3 sm:p-6 pb-28 space-y-6 overflow-y-auto">
+        {/* Mobile Top App Bar with Menu Button */}
+        <div className="lg:hidden flex items-center justify-between bg-white p-3.5 rounded-2xl border border-cream-300 shadow-2xs">
+          <button
+            type="button"
+            onClick={() => setIsMobileSidebarOpen(true)}
+            className="p-2 rounded-xl bg-magizh-900 text-white font-bold flex items-center gap-1.5 text-xs shadow-xs"
+          >
+            <Menu className="w-4 h-4" />
+            <span>Partner Menu</span>
+          </button>
+
+          <div className="min-w-0 text-center px-2">
+            <span className="font-black text-xs text-darkbrown-900 block truncate">
+              {activePartner.shopName}
+            </span>
+            <span className="text-[10px] text-gray-500 font-mono">
+              {activePartner.partnerCode}
+            </span>
           </div>
 
-          {/* Quick Actions & Store Config Tags */}
-          <div className="flex flex-wrap items-center gap-2 self-start md:self-center">
-            <button
-              onClick={() => setActiveTab('billing')}
-              className="px-4 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-darkbrown-950 font-black text-xs rounded-xl shadow-md transition-all flex items-center gap-1.5"
-            >
-              <Receipt className="w-4 h-4 text-darkbrown-950" />
-              <span>Customer Billing</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('settings')}
-              className="px-3 py-2 bg-white/10 hover:bg-white/20 text-white font-bold text-xs rounded-xl border border-white/20 transition-all flex items-center gap-1.5"
-              title="Configure Store UPI ID and Discount Cap"
-            >
-              <Settings className="w-4 h-4 text-amber-300" />
-              <span>Payment Settings</span>
-            </button>
-
+          <div className="flex items-center gap-1.5">
+            {pendingBills.length > 0 && (
+              <span
+                onClick={() => setActiveTab('pending')}
+                className="bg-red-500 text-white font-mono font-bold text-[10px] px-2 py-0.5 rounded-full cursor-pointer animate-pulse"
+              >
+                {pendingBills.length}
+              </span>
+            )}
             <button
               onClick={handlePartnerLogout}
-              className="px-3 py-2 bg-red-900/60 hover:bg-red-800 text-red-100 font-bold text-xs rounded-xl border border-red-700/60 transition-all flex items-center gap-1.5"
-              title="Sign out of Partner Portal"
+              className="p-1.5 text-red-700 bg-red-50 hover:bg-red-100 rounded-lg text-xs"
+              title="Logout"
             >
-              <LogOut className="w-4 h-4 text-red-300" />
-              <span>Logout</span>
+              <LogOut className="w-4 h-4" />
             </button>
           </div>
         </div>
 
-        {/* Highlight Pills Bar */}
-        <div className="mt-4 pt-3 border-t border-white/10 flex flex-wrap items-center justify-between gap-3 text-xs">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="inline-flex items-center gap-1 bg-amber-400/20 text-amber-300 border border-amber-400/30 px-2.5 py-1 rounded-lg font-bold">
-              <Coins className="w-3.5 h-3.5" />
-              <span>Store Coin Discount: {storeDiscountPercentage}%</span>
-            </span>
-            <span className="inline-flex items-center gap-1 bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 px-2.5 py-1 rounded-lg font-bold">
-              <QrCode className="w-3.5 h-3.5" />
-              <span>UPI: <span className="font-mono text-white">{activePartner.merchantUpiId || 'magizhcafee-3@okhdfcbank'}</span></span>
+        {/* 1. Partner Header Strip (Section 2) */}
+        <div className="bg-gradient-to-r from-blue-950 via-slate-900 to-blue-900 text-white rounded-3xl p-5 sm:p-6 shadow-card border border-blue-800/60">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-start sm:items-center gap-3.5">
+              <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white border border-blue-400/30 shrink-0 shadow-inner">
+                <Store className="w-7 h-7 text-amber-300" />
+              </div>
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h1 className="text-lg sm:text-2xl font-black tracking-tight text-white">{activePartner.shopName}</h1>
+                  <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-400/40">
+                    {activePartner.status}
+                  </span>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-200 border border-blue-400/30">
+                    {activePartner.storeCategory || 'Organic Groceries'}
+                  </span>
+                </div>
+                <p className="text-xs text-blue-200 mt-1">
+                  Store ID: <span className="font-mono font-bold text-white bg-white/10 px-1.5 py-0.5 rounded">{activePartner.partnerCode || activePartner.id}</span>
+                  <span className="mx-2">&bull;</span>
+                  Owner: <span className="font-semibold text-white">{activePartner.ownerName}</span>
+                  <span className="mx-2">&bull;</span>
+                  Phone: <span className="font-mono">{activePartner.mobile}</span>
+                </p>
+                <p className="text-[11px] text-blue-300/80 mt-0.5 flex items-center gap-1">
+                  <MapPin className="w-3 h-3 shrink-0 text-amber-400" />
+                  <span>{activePartner.address}, {activePartner.district} - {activePartner.pinCode}</span>
+                </p>
+              </div>
+            </div>
+
+            {/* Quick Actions & Store Config Tags */}
+            <div className="flex flex-wrap items-center gap-2 self-start md:self-center">
+              <button
+                onClick={() => setActiveTab('billing')}
+                className="px-4 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-darkbrown-950 font-black text-xs rounded-xl shadow-md transition-all flex items-center gap-1.5"
+              >
+                <Receipt className="w-4 h-4 text-darkbrown-950" />
+                <span>Customer Billing</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('settings')}
+                className="px-3 py-2 bg-white/10 hover:bg-white/20 text-white font-bold text-xs rounded-xl border border-white/20 transition-all flex items-center gap-1.5"
+                title="Configure Store UPI ID and Discount Cap"
+              >
+                <Settings className="w-4 h-4 text-amber-300" />
+                <span>Payment Settings</span>
+              </button>
+
+              <button
+                onClick={handlePartnerLogout}
+                className="px-3 py-2 bg-red-900/60 hover:bg-red-800 text-red-100 font-bold text-xs rounded-xl border border-red-700/60 transition-all flex items-center gap-1.5"
+                title="Sign out of Partner Portal"
+              >
+                <LogOut className="w-4 h-4 text-red-300" />
+                <span>Logout</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Highlight Pills Bar */}
+          <div className="mt-4 pt-3 border-t border-white/10 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="inline-flex items-center gap-1 bg-amber-400/20 text-amber-300 border border-amber-400/30 px-2.5 py-1 rounded-lg font-bold">
+                <Coins className="w-3.5 h-3.5" />
+                <span>Store Coin Discount: {storeDiscountPercentage}%</span>
+              </span>
+              <span className="inline-flex items-center gap-1 bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 px-2.5 py-1 rounded-lg font-bold">
+                <QrCode className="w-3.5 h-3.5" />
+                <span>UPI: <span className="font-mono text-white">{activePartner.merchantUpiId || 'magizhcafee-3@okhdfcbank'}</span></span>
+              </span>
+            </div>
+            <span className="text-[11px] text-blue-200">
+              Commission Rate: <strong className="text-white">{activePartner.commissionRate}%</strong> &bull; Bonus: <strong className="text-amber-400">{activePartner.specialCoinBonusMultiplier}x</strong>
             </span>
           </div>
-          <span className="text-[11px] text-blue-200">
-            Commission Rate: <strong className="text-white">{activePartner.commissionRate}%</strong> &bull; Bonus: <strong className="text-amber-400">{activePartner.specialCoinBonusMultiplier}x</strong>
-          </span>
         </div>
-      </div>
 
-      {statusNotice && (
-        <div className="p-3.5 bg-emerald-50 border border-emerald-300 rounded-2xl text-xs font-bold text-emerald-900 flex items-center gap-2.5 shadow-xs animate-in fade-in">
-          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-          <span>{statusNotice}</span>
-        </div>
-      )}
+        {statusNotice && (
+          <div className="p-3.5 bg-emerald-50 border border-emerald-300 rounded-2xl text-xs font-bold text-emerald-900 flex items-center gap-2.5 shadow-xs animate-in fade-in">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>{statusNotice}</span>
+          </div>
+        )}
 
-      {/* 2. Navigation Tabs (Sections 2, 4, 8, 10, 3) */}
-      <div className="flex border-b border-cream-300 gap-2 sm:gap-4 text-xs font-bold overflow-x-auto scrollbar-none pb-0.5">
-        <button
-          onClick={() => setActiveTab('overview')}
-          className={`pb-2.5 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
-            activeTab === 'overview'
-              ? 'border-blue-800 text-blue-900 font-extrabold'
-              : 'border-transparent text-gray-500 hover:text-gray-900'
-          }`}
-        >
-          <TrendingUp className="w-3.5 h-3.5" />
-          <span>Dashboard Overview</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('billing')}
-          className={`pb-2.5 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
-            activeTab === 'billing'
-              ? 'border-blue-800 text-blue-900 font-extrabold'
-              : 'border-transparent text-gray-500 hover:text-gray-900'
-          }`}
-        >
-          <Receipt className="w-3.5 h-3.5 text-amber-600" />
-          <span>Customer Billing (POS)</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('pending')}
-          className={`pb-2.5 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
-            activeTab === 'pending'
-              ? 'border-blue-800 text-blue-900 font-extrabold'
-              : 'border-transparent text-gray-500 hover:text-gray-900'
-          }`}
-        >
-          <Clock className="w-3.5 h-3.5 text-amber-500" />
-          <span>Pending Transactions ({pendingBills.length})</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('history')}
-          className={`pb-2.5 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
-            activeTab === 'history'
-              ? 'border-blue-800 text-blue-900 font-extrabold'
-              : 'border-transparent text-gray-500 hover:text-gray-900'
-          }`}
-        >
-          <Calendar className="w-3.5 h-3.5" />
-          <span>Transaction History &amp; Receipts ({serverBills.length})</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('monthlyCoinReport')}
-          className={`pb-2.5 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
-            activeTab === 'monthlyCoinReport'
-              ? 'border-amber-600 text-amber-900 font-extrabold'
-              : 'border-transparent text-gray-500 hover:text-gray-900'
-          }`}
-        >
-          <Coins className="w-3.5 h-3.5 text-amber-600" />
-          <span>Monthly Coin Report</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('settings')}
-          className={`pb-2.5 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
-            activeTab === 'settings'
-              ? 'border-blue-800 text-blue-900 font-extrabold'
-              : 'border-transparent text-gray-500 hover:text-gray-900'
-          }`}
-        >
-          <Settings className="w-3.5 h-3.5" />
-          <span>Store &amp; UPI Settings</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('orders')}
-          className={`pb-2.5 border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
-            activeTab === 'orders'
-              ? 'border-blue-800 text-blue-900 font-extrabold'
-              : 'border-transparent text-gray-500 hover:text-gray-900'
-          }`}
-        >
-          <Package className="w-3.5 h-3.5" />
-          <span>Online Fulfillment ({partnerOrders.length})</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('inventory')}
-          className={`pb-2.5 border-b-2 transition-all shrink-0 ${
-            activeTab === 'inventory'
-              ? 'border-blue-800 text-blue-900 font-extrabold'
-              : 'border-transparent text-gray-500 hover:text-gray-900'
-          }`}
-        >
-          Inventory
-        </button>
-      </div>
+        {/* Active Section Content (Controlled exclusively via Sidebar Navigation) */}
 
       {/* TAB 1: OVERVIEW & KEY METRICS (Section 2) */}
       {activeTab === 'overview' && (
@@ -1975,71 +1934,6 @@ export const PartnerDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* TAB 6: ONLINE FULFILLMENT ORDERS */}
-      {activeTab === 'orders' && (
-        <div className="bg-white rounded-3xl border border-cream-300 p-5 shadow-2xs space-y-4 animate-in fade-in">
-          <h2 className="text-base font-black text-darkbrown-900 flex items-center gap-2">
-            <Package className="w-5 h-5 text-blue-700" />
-            <span>Online Orders Assigned to {activePartner.shopName} ({partnerOrders.length})</span>
-          </h2>
-          {partnerOrders.length === 0 ? (
-            <div className="py-8 text-center text-xs text-gray-500">
-              No online fulfillment orders currently assigned to your store.
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {partnerOrders.map((ord) => (
-                <div key={ord.id} className="p-4 rounded-2xl border border-cream-200 bg-cream-50/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-                  <div>
-                    <span className="font-mono font-bold text-darkbrown-900">Order #{ord.id}</span>
-                    <p className="text-gray-600 mt-0.5">Amount: ₹{ord.finalPayableAmount} &bull; Customer: {ord.customerName}</p>
-                    <span className="text-[10px] font-bold text-blue-800 bg-blue-100 px-2 py-0.5 rounded-full inline-block mt-1">
-                      {ord.orderStatus}
-                    </span>
-                  </div>
-                  <div className="flex gap-2">
-                    {ord.orderStatus === 'Confirmed' && (
-                      <button
-                        onClick={() => handleUpdateOrderStatus(ord.id, 'Packed')}
-                        className="px-3 py-1.5 bg-blue-800 text-white font-bold text-xs rounded-xl"
-                      >
-                        Mark Packed
-                      </button>
-                    )}
-                    {ord.orderStatus === 'Packed' && (
-                      <button
-                        onClick={() => handleUpdateOrderStatus(ord.id, 'Shipped')}
-                        className="px-3 py-1.5 bg-emerald-800 text-white font-bold text-xs rounded-xl"
-                      >
-                        Mark Shipped
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* TAB 7: INVENTORY */}
-      {activeTab === 'inventory' && (
-        <div className="bg-white rounded-3xl border border-cream-300 p-5 shadow-2xs space-y-4 animate-in fade-in">
-          <h2 className="text-base font-black text-darkbrown-900">Store Inventory &amp; Stock Levels</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-            {products.slice(0, 9).map((p) => (
-              <div key={p.id} className="p-3.5 rounded-2xl border border-cream-200 bg-cream-50/40 text-xs space-y-1">
-                <span className="font-bold text-darkbrown-900 block truncate">{p.name}</span>
-                <span className="text-[11px] text-gray-500 block">{p.category}</span>
-                <span className="text-[11px] font-mono text-emerald-800 font-bold block">
-                  Stock: {p.variants[0]?.stock || 25} units
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
       {/* Legacy Modal POS In-Store Billing (Preserved for tests) */}
       {isBillingModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-darkbrown-950/70 backdrop-blur-sm animate-in fade-in">
@@ -2162,6 +2056,7 @@ export const PartnerDashboard: React.FC = () => {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 };

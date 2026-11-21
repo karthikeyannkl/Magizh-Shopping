@@ -351,7 +351,7 @@ export default function App() {
             </div>
           );
         }
-        return <PartnerShopsDirectory onBackToShopping={() => navigateTo('home')} />;
+        return <PartnerShopsDirectory key={currentUser.id} onBackToShopping={() => navigateTo('home')} />;
       case 'categories':
       case 'home':
       default:

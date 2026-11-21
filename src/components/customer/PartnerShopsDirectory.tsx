@@ -31,12 +31,12 @@ interface PartnerShopsDirectoryProps {
 }
 
 export const PartnerShopsDirectory: React.FC<PartnerShopsDirectoryProps> = ({ onBackToShopping }) => {
-  const currentUser: User = StorageService.getCurrentUser();
+  const [currentUser, setCurrentUser] = useState<User>(() => StorageService.getCustomerUser());
   const [partners, setPartners] = useState<PartnerShop[]>(StorageService.getApprovedPartners());
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDistrict, setSelectedDistrict] = useState('All');
   const [coinBalance, setCoinBalance] = useState(
-    StorageService.getCoinAccount(currentUser.id).availableBalance
+    StorageService.getCoinAccount(currentUser?.id || '').availableBalance
   );
 
   // In-Store Live Bills State (from Server DB)
@@ -56,19 +56,31 @@ export const PartnerShopsDirectory: React.FC<PartnerShopsDirectoryProps> = ({ on
 
   // Fetch pending bills for this customer from authoritative backend
   const fetchPendingBills = async () => {
+    if (!currentUser || !currentUser.id || currentUser.isGuest) {
+      setPendingBills([]);
+      return;
+    }
     try {
       const res = await fetch(
         `/api/customer/pending-bills?customerId=${encodeURIComponent(currentUser.id)}&mobile=${encodeURIComponent(
           currentUser.mobile || ''
-        )}`
+        )}&_t=${Date.now()}`,
+        { cache: 'no-store' }
       );
       if (res.ok) {
         const data = await res.json();
         if (data.success && Array.isArray(data.bills)) {
-          setPendingBills(data.bills);
+          // Strict account isolation: verify bill belongs to this customer ID or phone
+          const customerBills = data.bills.filter((b: PartnerBill) => {
+            const matchId = b.customerId && b.customerId === currentUser.id;
+            const matchPhone = currentUser.mobile && b.customerPhone === currentUser.mobile;
+            return matchId || matchPhone;
+          });
+          setPendingBills(customerBills);
+
           // If a modal bill is currently open, refresh its state or detect completion
           if (activeBillModal) {
-            const updated = data.bills.find((b: PartnerBill) => b.id === activeBillModal.id);
+            const updated = customerBills.find((b: PartnerBill) => b.id === activeBillModal.id);
             if (updated) {
               if (updated.status === 'COMPLETED') {
                 setCompletedBillReceipt(updated);
@@ -79,16 +91,21 @@ export const PartnerShopsDirectory: React.FC<PartnerShopsDirectoryProps> = ({ on
               }
             } else {
               // Direct single bill check in case it transitioned to completed
-              fetch(`/api/customer/bills/${activeBillModal.id}`)
+              fetch(`/api/customer/bills/${activeBillModal.id}?_t=${Date.now()}`, { cache: 'no-store' })
                 .then((r) => r.json())
                 .then((singleData) => {
                   if (singleData.success && singleData.bill) {
-                    if (singleData.bill.status === 'COMPLETED') {
-                      setCompletedBillReceipt(singleData.bill);
-                      setActiveBillModal(null);
-                      setCoinBalance(StorageService.getCoinAccount(currentUser.id).availableBalance);
-                    } else {
-                      setActiveBillModal(singleData.bill);
+                    const isForThisUser =
+                      singleData.bill.customerId === currentUser.id ||
+                      (currentUser.mobile && singleData.bill.customerPhone === currentUser.mobile);
+                    if (isForThisUser) {
+                      if (singleData.bill.status === 'COMPLETED') {
+                        setCompletedBillReceipt(singleData.bill);
+                        setActiveBillModal(null);
+                        setCoinBalance(StorageService.getCoinAccount(currentUser.id).availableBalance);
+                      } else {
+                        setActiveBillModal(singleData.bill);
+                      }
                     }
                   }
                 })
@@ -109,19 +126,31 @@ export const PartnerShopsDirectory: React.FC<PartnerShopsDirectoryProps> = ({ on
     // Poll every 2.5 seconds for instant status synchronization
     const interval = setInterval(fetchPendingBills, 2500);
 
-    const unsub = subscribe('partnersChanged', () => {
+    const unsubUser = subscribe('currentUserChanged', (u: User) => {
+      const activeUser = u || StorageService.getCustomerUser();
+      setCurrentUser(activeUser);
+      setCoinBalance(StorageService.getCoinAccount(activeUser?.id || '').availableBalance);
+      // Immediately clear old bills
+      setPendingBills([]);
+      setActiveBillModal(null);
+      setCompletedBillReceipt(null);
+    });
+
+    const unsubPartners = subscribe('partnersChanged', () => {
       setPartners(StorageService.getApprovedPartners());
     });
     const unsubCoin = subscribe('coinAccountChanged', () => {
-      setCoinBalance(StorageService.getCoinAccount(currentUser.id).availableBalance);
+      const activeUser = StorageService.getCustomerUser();
+      setCoinBalance(StorageService.getCoinAccount(activeUser?.id || '').availableBalance);
     });
 
     return () => {
       clearInterval(interval);
-      unsub();
+      unsubUser();
+      unsubPartners();
       unsubCoin();
     };
-  }, [currentUser.id, currentUser.mobile, activeBillModal?.id]);
+  }, [currentUser?.id, currentUser?.mobile, activeBillModal?.id]);
 
   const districts = ['All', ...new Set(partners.map((p) => p.district))];
 
@@ -323,18 +352,30 @@ export const PartnerShopsDirectory: React.FC<PartnerShopsDirectoryProps> = ({ on
                     </div>
 
                     <div className="flex items-center gap-2">
-                      <span className="text-[11px] font-bold px-2.5 py-1 rounded-xl bg-orange-100 text-orange-800 border border-orange-200 flex items-center gap-1">
-                        <Clock className="w-3 h-3 text-orange-600 animate-spin" />
-                        <span>
-                          {bill.status === 'PENDING_PARTNER_VERIFICATION' || bill.status === 'PAYMENT_CONFIRMED_BY_CUSTOMER'
-                            ? 'Waiting for Cashier Verification'
-                            : isUpiSelected
-                            ? 'UPI Selected (Awaiting Confirmation)'
-                            : isCashSelected
-                            ? 'Cash Selected (Awaiting Confirmation)'
-                            : 'Pending Your Payment'}
+                      {bill.status === 'COMPLETED' ? (
+                        <span className="text-[11px] font-bold px-2.5 py-1 rounded-xl bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Payment Completed &amp; Verified</span>
                         </span>
-                      </span>
+                      ) : bill.status === 'REJECTED' || bill.status === 'CANCELLED' ? (
+                        <span className="text-[11px] font-bold px-2.5 py-1 rounded-xl bg-rose-100 text-rose-800 border border-rose-300 flex items-center gap-1">
+                          <XCircle className="w-3.5 h-3.5 text-rose-600" />
+                          <span>Payment Disputed / Rejected</span>
+                        </span>
+                      ) : (
+                        <span className="text-[11px] font-bold px-2.5 py-1 rounded-xl bg-orange-100 text-orange-800 border border-orange-200 flex items-center gap-1">
+                          <Clock className="w-3 h-3 text-orange-600 animate-spin" />
+                          <span>
+                            {bill.status === 'PENDING_PARTNER_VERIFICATION' || bill.status === 'PAYMENT_CONFIRMED_BY_CUSTOMER'
+                              ? 'Waiting for Cashier Verification'
+                              : isUpiSelected
+                              ? 'UPI Selected (Awaiting Confirmation)'
+                              : isCashSelected
+                              ? 'Cash Selected (Awaiting Confirmation)'
+                              : 'Pending Your Payment'}
+                          </span>
+                        </span>
+                      )}
                     </div>
                   </div>
 
@@ -375,26 +416,58 @@ export const PartnerShopsDirectory: React.FC<PartnerShopsDirectoryProps> = ({ on
                     </div>
                   </div>
 
-                  {/* Action Button to Open Payment Modal */}
-                  <div className="flex items-center justify-between pt-1">
-                    <p className="text-xs text-gray-600">
-                      Choose to pay via <strong>GPay / UPI</strong> or <strong>Cash at counter</strong>.
-                    </p>
-                    <button
-                      onClick={() => {
-                        setActiveBillModal(bill);
-                        setSelectedPaymentMode(
-                          bill.paymentMethod === 'cash' ? 'cash' : 'upi'
-                        );
-                        setUpiUtrInput(bill.utrNumber || '');
-                      }}
-                      className="px-5 py-2.5 bg-gradient-to-r from-magizh-800 to-magizh-900 hover:from-magizh-900 hover:to-black text-white text-xs font-black rounded-xl shadow-md transition-all flex items-center gap-2"
-                    >
-                      <CreditCard className="w-4 h-4 text-b5-400" />
-                      <span>Proceed to Pay (₹{bill.payableAmount})</span>
-                      <ChevronRight className="w-4 h-4" />
-                    </button>
-                  </div>
+                  {/* Action Button Section: Completed bills get View Receipt; Never show Proceed to Pay on Completed! */}
+                  {bill.status === 'COMPLETED' ? (
+                    <div className="flex items-center justify-between pt-1">
+                      <p className="text-xs text-emerald-700 font-medium">
+                        Receipt <strong>#{bill.receiptNumber || 'STORE-RCPT'}</strong> issued. Payment verified by cashier.
+                      </p>
+                      <button
+                        onClick={() => setCompletedBillReceipt(bill)}
+                        className="px-5 py-2.5 bg-gradient-to-r from-emerald-700 to-emerald-800 hover:from-emerald-800 hover:to-emerald-900 text-white text-xs font-black rounded-xl shadow-md transition-all flex items-center gap-2"
+                      >
+                        <CheckCircle2 className="w-4 h-4 text-emerald-300" />
+                        <span>View Store Receipt</span>
+                      </button>
+                    </div>
+                  ) : bill.status === 'REJECTED' || bill.status === 'CANCELLED' ? (
+                    <div className="flex items-center justify-between pt-1">
+                      <p className="text-xs text-rose-700 font-medium">
+                        Bill was rejected or cancelled by partner cashier. Zero coins deducted.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between pt-1">
+                      <p className="text-xs text-gray-600">
+                        {bill.status === 'PENDING_PARTNER_VERIFICATION' || bill.status === 'PAYMENT_CONFIRMED_BY_CUSTOMER'
+                          ? 'Payment confirmed by you. Waiting for cashier to approve.'
+                          : 'Choose to pay via GPay / UPI or Cash at counter.'}
+                      </p>
+                      <button
+                        onClick={() => {
+                          setActiveBillModal(bill);
+                          setSelectedPaymentMode(
+                            bill.paymentMethod === 'cash' ? 'cash' : 'upi'
+                          );
+                          setUpiUtrInput(bill.utrNumber || '');
+                        }}
+                        className="px-5 py-2.5 bg-gradient-to-r from-magizh-800 to-magizh-900 hover:from-magizh-900 hover:to-black text-white text-xs font-black rounded-xl shadow-md transition-all flex items-center gap-2"
+                      >
+                        {bill.status === 'PENDING_PARTNER_VERIFICATION' || bill.status === 'PAYMENT_CONFIRMED_BY_CUSTOMER' ? (
+                          <>
+                            <Clock className="w-4 h-4 text-amber-400" />
+                            <span>View Status (₹{bill.payableAmount})</span>
+                          </>
+                        ) : (
+                          <>
+                            <CreditCard className="w-4 h-4 text-b5-400" />
+                            <span>Proceed to Pay (₹{bill.payableAmount})</span>
+                            <ChevronRight className="w-4 h-4" />
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -459,12 +532,62 @@ export const PartnerShopsDirectory: React.FC<PartnerShopsDirectoryProps> = ({ on
 
               {/* Payment Selection Tab Options (Option A vs Option B) */}
               {(() => {
+                const isCompleted = activeBillModal.status === 'COMPLETED';
                 const isConfirmed =
                   activeBillModal.status === 'PENDING_PARTNER_VERIFICATION' ||
                   activeBillModal.status === 'PAYMENT_CONFIRMED_BY_CUSTOMER';
                 const isRejected =
                   activeBillModal.status === 'REJECTED' ||
                   activeBillModal.status === 'CANCELLED';
+
+                if (isCompleted) {
+                  return (
+                    <div className="p-5 bg-emerald-50 rounded-2xl border-2 border-emerald-300 text-xs text-emerald-950 space-y-4 animate-in fade-in">
+                      <div className="flex items-center gap-2 font-black text-sm text-emerald-900">
+                        <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                        <span>Payment Completed &amp; Verified by Store Cashier</span>
+                      </div>
+                      <div className="bg-white/90 p-4 rounded-xl border border-emerald-200 space-y-2">
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Official Receipt:</span>
+                          <span className="font-mono font-black text-emerald-900">
+                            {activeBillModal.receiptNumber || 'RCPT-ISSUED'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Payment Mode:</span>
+                          <span className="font-bold uppercase text-darkbrown-900">
+                            {activeBillModal.paymentMethod || 'COUNTER'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Total Paid to Store:</span>
+                          <span className="font-mono font-black text-emerald-800">
+                            ₹{activeBillModal.payableAmount}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-b5-800 font-bold pt-1 border-t border-emerald-200">
+                          <span>B5 Coins Redeemed:</span>
+                          <span className="font-mono">{activeBillModal.coinsToRedeem} B5 Coins (Deducted)</span>
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-emerald-800 leading-relaxed">
+                        This bill has been verified and settled. You do not need to make any further payment.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCompletedBillReceipt(activeBillModal);
+                          setActiveBillModal(null);
+                        }}
+                        className="w-full py-3 px-4 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-2 transition-all"
+                      >
+                        <CheckCircle2 className="w-4 h-4 text-emerald-300" />
+                        <span>View Full Store Receipt</span>
+                      </button>
+                    </div>
+                  );
+                }
 
                 if (isRejected) {
                   return (

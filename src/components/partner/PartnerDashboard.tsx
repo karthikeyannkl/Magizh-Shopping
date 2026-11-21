@@ -323,6 +323,8 @@ export const PartnerDashboard: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           partnerId: activePartner.id,
+          customerId: searchedCustomer.id,
+          customerPhone: searchedCustomer.mobile,
           customerMobile: searchedCustomer.mobile,
           customerName: searchedCustomer.name,
           billSummary: billingSummary.trim() || 'In-store merchandise bill',
@@ -545,6 +547,8 @@ export const PartnerDashboard: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           partnerId: activePartner.id,
+          customerId: posCustomer.id,
+          customerPhone: posCustomer.mobile,
           customerMobile: posCustomer.mobile,
           customerName: posCustomer.name,
           billSummary: posSummary,

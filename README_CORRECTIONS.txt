@@ -1,85 +1,40 @@
-================================================================================
-MAGIZH SHOPPING - ONLY CORRECTED FILES MANIFEST & CHANGELOG
-Date & Time: 2026-11-20
-Project: Magizh Shopping & Commerce Ecosystem (Strictly Pure - Zero MLM/B5 Level Files)
-Build Status: npm run build PASSED (0 errors, TypeScript clean)
-================================================================================
+========================================================================
+MAGIZH SHOPPING - ONLY CORRECTED FILES
+FINAL POS BILL PAYMENT & MULTI-CUSTOMER ACCOUNT ISOLATION RELEASE
+========================================================================
 
-SUMMARY OF LATEST CRITICAL CORRECTIONS:
---------------------------------------------------------------------------------
-1. STORE COUNTER POS PAYMENT CONFIRMATION SYNCHRONIZATION:
-   - Fixed the customer screen hanging issue ("Waiting for Partner Cashier Verification").
-     Root cause: Server bills query previously dropped completed bills immediately,
-     causing customer modal polling to lose track of the transaction. Polling now captures
-     recent completed bills and triggers instant celebration receipt modal with updated coin balance.
-   - Dual customer payment options maintained:
-     * Option A: GPay / UPI
-     * Option B: Cash at Store Counter
-   - Neither option immediately sends bill to cashier upon selection.
-   - Customer must confirm by clicking:
-     * "I Have Completed UPI Payment (₹payableAmount)" (with optional 12-digit UTR input)
-     * "I Have Paid Cash (₹payableAmount)"
-   - Only customer-confirmed bills transition to "PENDING_PARTNER_VERIFICATION" and appear
-     for Cashier verification.
+Date: 21-November-2026
 
-2. PARTNER POS CASHIER VERIFICATION SCREEN:
-   - Displays all 8 authoritative fields required by management:
-     1. Bill # (e.g., #MAG-BILL-XXXXXX)
-     2. Customer Name
-     3. Customer Mobile Number
-     4. Bill Amount (Total ₹)
-     5. Coins Redeemed (கழிக்கப்பட்ட காயின்கள் & ₹ discount)
-     6. Amount Received (Customer கட்டிய தொகை ₹)
-     7. Payment Method (Cash or GPay/UPI with UTR Ref badge)
-     8. Transaction Date & Time + Customer Confirmed timestamp
-   - Cashier Action Buttons:
-     * Confirm Payment Received (Green - records verified in bank/drawer, deducts B5 Coins, issues receipt)
-     * Reject / Dispute Payment (Red - records reason in audit trail, 0 coins deducted)
-     * Cancel Bill (Releases bill, 0 coins deducted)
-   - Secondary section displays "Bills Awaiting Customer Payment Confirmation".
+CORRECTIONS INCLUDED IN THIS PACKAGE:
 
-3. B5 COIN MANAGEMENT & IDEMPOTENCY SAFETY:
-   - Customer coins debited ONLY upon successful cashier verification.
-   - If rejected or cancelled, ZERO customer coins are deducted.
-   - Partner reward coins calculated according to Magizh rules:
-     5% of bill amount * partner specialCoinBonusMultiplier (e.g. 1.5x).
-   - Double-entry ledger record created in 'coin_ledger' / 'coin_transactions'.
-   - Concurrency & idempotency protection: Re-approving an already completed bill throws
-     an immediate error and rejects duplicate debits/credits.
+1. POS BILL PAYMENT COMPLETION SYNCHRONIZATION (CUSTOMER SIDE):
+   - Partner Cashier approves payment in Partner App.
+   - Customer UI immediately updates status to 'Payment Completed & Verified' (Emerald).
+   - 'Proceed to Pay' button is COMPLETELY REMOVED from the bill card.
+   - Replaced with 'View Store Receipt' modal.
+   - Customer cannot re-pay or select payment modes on settled bills.
+   - Cashier approval atomically closes the bill and deducts B5 Coins.
 
-4. DEDICATED PARTNER MONTHLY COIN REPORT:
-   - Accessible via the "Monthly Coin Report" tab in Partner App.
-   - Month Selector dropdown supporting current and past months.
-   - 4 Top KPI Metric Cards:
-     * Partner Coins Earned (5% commission * bonus multiplier)
-     * Customer Coins Redeemed (counter savings)
-     * Total In-Store Sales Volume
-     * Store Cash/UPI Collected
-   - Previous Month Comparison with net coin difference badge (+/-).
-   - Daily Coin Summary Table: Active days, bill counts, coins redeemed, collected cash, partner coins.
-   - Per-Bill & Customer-Wise Transaction Table: Bill #, receipt #, customer name & phone,
-     coins, cash collected, partner coins, payment method + UTR, and timestamp.
+2. MULTI-CUSTOMER POS BILL & ACCOUNT MAPPING ISOLATION (1:1 MAPPING):
+   - When multiple customers log in with different mobile numbers, bills are strictly isolated.
+   - Customer A sees ONLY Customer A's bills.
+   - Customer B sees ONLY Customer B's bills.
+   - Customer logout immediately clears all bill state from React state and memory.
+   - App-level key prop mounts a fresh PartnerShopsDirectory on account switch.
+   - Authoritative backend API (/customer/pending-bills, /customer/all-bills) includes cache-busting headers.
 
-5. ADMIN PARTNER FRANCHISE FIXES:
-   - Unified Admin Authorization token verification across both Bearer header and session cookie.
-   - Admin Partner Franchise tab displays all 28 registered partner shops with status filtering.
+3. FILES MODIFIED:
+   - src/components/partner/PartnerDashboard.tsx (explicit customerId & mobile on bill creation)
+   - src/components/customer/PartnerShopsDirectory.tsx (state currentUser, account listener, completed card & button removal)
+   - src/components/customer/CustomerAccount.tsx (account isolation, bill state flush on logout/switch)
+   - src/App.tsx (fresh component instance on account switch via key prop)
+   - src/services/storage.ts (guest user reset on customerLogout)
+   - server/db.js (safe getCustomerPendingBills with customer isolation)
+   - server/api.js (no-cache headers, guest rejection)
 
-================================================================================
-LIST OF MODIFIED FILES IN THIS ZIP ARCHIVE:
-================================================================================
-1.  server/db.js
-2.  server/api.js
-3.  server/server.js
-4.  src/types/index.ts
-5.  src/services/storage.ts
-6.  src/components/partner/PartnerDashboard.tsx
-7.  src/components/customer/PartnerShopsDirectory.tsx
-8.  src/components/customer/CustomerAccount.tsx
-9.  src/components/admin/AdminPanel.tsx
-10. src/components/admin/AdminSidebar.tsx
-11. README_CORRECTIONS.txt
+4. PURITY VERIFICATION:
+   - 100% Magizh Shopping core files only.
+   - ZERO MLM / B5 level files.
+   - Existing database preserved.
 
-HOW TO APPLY:
-Extract this ZIP directly over the root of your existing Magizh Shopping project.
-The directory structure matches the project root exactly.
-================================================================================
+========================================================================

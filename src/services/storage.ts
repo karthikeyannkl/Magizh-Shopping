@@ -383,6 +383,7 @@ export const StorageService = {
     localStorage.removeItem(KEYS.CURRENT_USER);
     localStorage.removeItem('magizh_auth_token');
     setStorage(KEYS.CURRENT_USER, DEFAULT_GUEST_USER);
+    setStorage(PORTAL_KEYS.CUSTOMER_USER, DEFAULT_GUEST_USER);
     emit('customerUserChanged', DEFAULT_GUEST_USER);
     emit('currentUserChanged', DEFAULT_GUEST_USER);
   },

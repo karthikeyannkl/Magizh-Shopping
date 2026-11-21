@@ -1903,17 +1903,61 @@ export const dbService = {
     return mapBillRow(res[0].columns, res[0].values[0]);
   },
 
-  getCustomerPendingBills(customerIdOrPhone) {
-    // Return all pending bills plus any bills completed/updated in the last 30 minutes for real-time celebration receipt sync
-    const res = db.exec(
-      `SELECT * FROM partner_bills 
-       WHERE (customer_id = ? OR customer_phone = ?) 
-         AND (status NOT IN ('COMPLETED', 'REJECTED', 'CANCELLED') 
-              OR datetime(created_at) >= datetime('now', '-30 minutes')
-              OR datetime(COALESCE(admin_decision_at, partner_received_at, created_at)) >= datetime('now', '-30 minutes'))
-       ORDER BY created_at DESC`,
-      [customerIdOrPhone, customerIdOrPhone]
-    );
+  getCustomerPendingBills(customerId, mobile) {
+    const cid = customerId && customerId !== 'guest' && customerId !== 'DEFAULT_GUEST_USER' ? String(customerId).trim() : '';
+    const phone = mobile ? String(mobile).trim() : '';
+    if (!cid && !phone) return [];
+
+    let sql;
+    let params;
+    if (cid && phone) {
+      sql = `SELECT * FROM partner_bills 
+             WHERE (customer_id = ? OR customer_phone = ?) 
+               AND (status NOT IN ('COMPLETED', 'REJECTED', 'CANCELLED') 
+                    OR datetime(COALESCE(admin_decision_at, partner_received_at, created_at)) >= datetime('now', '-30 minutes'))
+             ORDER BY created_at DESC`;
+      params = [cid, phone];
+    } else if (cid) {
+      sql = `SELECT * FROM partner_bills 
+             WHERE customer_id = ? 
+               AND (status NOT IN ('COMPLETED', 'REJECTED', 'CANCELLED') 
+                    OR datetime(COALESCE(admin_decision_at, partner_received_at, created_at)) >= datetime('now', '-30 minutes'))
+             ORDER BY created_at DESC`;
+      params = [cid];
+    } else {
+      sql = `SELECT * FROM partner_bills 
+             WHERE customer_phone = ? 
+               AND (status NOT IN ('COMPLETED', 'REJECTED', 'CANCELLED') 
+                    OR datetime(COALESCE(admin_decision_at, partner_received_at, created_at)) >= datetime('now', '-30 minutes'))
+             ORDER BY created_at DESC`;
+      params = [phone];
+    }
+
+    const res = db.exec(sql, params);
+    if (!res[0]) return [];
+    const cols = res[0].columns;
+    return res[0].values.map((v) => mapBillRow(cols, v));
+  },
+
+  getCustomerAllBills(customerId, mobile) {
+    const cid = customerId && customerId !== 'guest' && customerId !== 'DEFAULT_GUEST_USER' ? String(customerId).trim() : '';
+    const phone = mobile ? String(mobile).trim() : '';
+    if (!cid && !phone) return [];
+
+    let sql;
+    let params;
+    if (cid && phone) {
+      sql = `SELECT * FROM partner_bills WHERE (customer_id = ? OR customer_phone = ?) ORDER BY created_at DESC`;
+      params = [cid, phone];
+    } else if (cid) {
+      sql = `SELECT * FROM partner_bills WHERE customer_id = ? ORDER BY created_at DESC`;
+      params = [cid];
+    } else {
+      sql = `SELECT * FROM partner_bills WHERE customer_phone = ? ORDER BY created_at DESC`;
+      params = [phone];
+    }
+
+    const res = db.exec(sql, params);
     if (!res[0]) return [];
     const cols = res[0].columns;
     return res[0].values.map((v) => mapBillRow(cols, v));

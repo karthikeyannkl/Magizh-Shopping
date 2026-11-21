@@ -1598,27 +1598,51 @@ apiRouter.post(['/partners/bills/create', '/partners/bills'], (req, res) => {
   }
 });
 
-// Customer Retrieves Pending Bills for Approval
+// Customer Retrieves Pending Bills for Approval (Live, Uncached, Strictly Isolated by Customer Account)
 apiRouter.get('/customer/pending-bills', (req, res) => {
+  res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+
   let customerId = String(req.query.customerId || req.query.userId || '').trim();
   const phone = String(req.query.mobile || req.query.phone || '').trim();
 
-  if (!customerId && phone) {
-    const user = dbService.findUserByMobile(phone);
-    if (user) {
-      customerId = user.id;
+  // If user is guest or not logged in, NEVER return bills
+  if (!customerId || customerId === 'guest' || customerId === 'DEFAULT_GUEST_USER') {
+    if (!phone) {
+      return res.json({ success: true, count: 0, bills: [] });
     }
   }
 
-  if (!customerId && !phone) return res.status(400).json({ error: 'Customer ID or Mobile required.' });
-  const bills = customerId
-    ? dbService.getCustomerPendingBills(customerId)
-    : dbService.getCustomerPendingBills(phone);
+  const bills = dbService.getCustomerPendingBills(customerId, phone);
   res.json({ success: true, count: bills.length, bills });
 });
 
-// Single Bill Details for Customer
+// Customer Retrieves All Bills History (Completed & Pending)
+apiRouter.get('/customer/all-bills', (req, res) => {
+  res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+
+  let customerId = String(req.query.customerId || req.query.userId || '').trim();
+  const phone = String(req.query.mobile || req.query.phone || '').trim();
+
+  if (!customerId || customerId === 'guest' || customerId === 'DEFAULT_GUEST_USER') {
+    if (!phone) {
+      return res.json({ success: true, count: 0, bills: [] });
+    }
+  }
+
+  const bills = dbService.getCustomerAllBills(customerId, phone);
+  res.json({ success: true, count: bills.length, bills });
+});
+
+// Single Bill Details for Customer (Live Status)
 apiRouter.get('/customer/bills/:id', (req, res) => {
+  res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+
   const bill = dbService.getBillById(req.params.id);
   if (!bill) return res.status(404).json({ error: 'Bill not found' });
   res.json({ success: true, bill });

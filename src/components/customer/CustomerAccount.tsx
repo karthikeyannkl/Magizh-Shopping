@@ -106,6 +106,10 @@ export const CustomerAccount: React.FC<CustomerAccountProps> = ({
   useEffect(() => {
     const unsub = subscribe('currentUserChanged', (u: User) => {
       setCurrentUser(u);
+      setPendingBills([]);
+      setBillNotice(null);
+      setBillMethodSelection({});
+      setBillUtrInput({});
       setAddresses(u.addresses || []);
       setCoinAccount(StorageService.getCoinAccount(u.id));
       setEditName(u.name || '');
@@ -165,12 +169,25 @@ export const CustomerAccount: React.FC<CustomerAccountProps> = ({
   }, [currentUser.id]);
 
   const fetchPendingBills = async () => {
-    if (!currentUser.id || currentUser.isGuest) return;
+    if (!currentUser.id || currentUser.isGuest) {
+      setPendingBills([]);
+      return;
+    }
     try {
-      const res = await fetch(`/api/customer/pending-bills?customerId=${encodeURIComponent(currentUser.id)}`);
+      const res = await fetch(
+        `/api/customer/pending-bills?customerId=${encodeURIComponent(currentUser.id)}&mobile=${encodeURIComponent(
+          currentUser.mobile || ''
+        )}&_t=${Date.now()}`,
+        { cache: 'no-store' }
+      );
       if (res.ok) {
         const data = await res.json();
-        setPendingBills(data.bills || []);
+        const userBills = (data.bills || []).filter((b: PartnerBill) => {
+          const matchId = b.customerId && b.customerId === currentUser.id;
+          const matchPhone = currentUser.mobile && b.customerPhone === currentUser.mobile;
+          return matchId || matchPhone;
+        });
+        setPendingBills(userBills);
       }
     } catch {
       // offline
@@ -517,6 +534,7 @@ export const CustomerAccount: React.FC<CustomerAccountProps> = ({
 
   const handleLogout = () => {
     if (window.confirm('Are you sure you want to log out of your Magizh Customer account?')) {
+      setPendingBills([]);
       StorageService.logout();
       window.location.href = '/';
     }

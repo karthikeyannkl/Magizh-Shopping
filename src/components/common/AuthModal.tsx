@@ -102,6 +102,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
       const data = await res.json();
       if (res.ok && data.user) {
+        try { sessionStorage.setItem('magizh_intro_shown', 'true'); } catch {}
         StorageService.setCurrentUser(data.user);
         onSuccess(data.user);
         onClose();
@@ -119,6 +120,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         : StorageService.findUserByEmail(email.trim());
 
       if (user) {
+        try { sessionStorage.setItem('magizh_intro_shown', 'true'); } catch {}
         StorageService.setCurrentUser(user);
         onSuccess(user);
         onClose();
@@ -179,6 +181,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       setLoading(false);
 
       if (res.ok && data.user) {
+        try { sessionStorage.setItem('magizh_intro_shown', 'true'); } catch {}
         StorageService.saveUser(data.user);
         StorageService.setCurrentUser(data.user);
 

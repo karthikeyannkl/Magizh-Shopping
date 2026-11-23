@@ -27,6 +27,7 @@ interface HomePageProps {
   onBuyNow: (product: Product, variant: WeightVariant, quantity: number) => void;
   onNavigateCategory: (category: ProductCategory) => void;
   onNavigatePartnerShops?: () => void;
+  onNavigateTab?: (tab: string) => void;
 }
 
 export const HomePage: React.FC<HomePageProps> = ({
@@ -35,6 +36,7 @@ export const HomePage: React.FC<HomePageProps> = ({
   onBuyNow,
   onNavigateCategory,
   onNavigatePartnerShops,
+  onNavigateTab,
 }) => {
   const [products, setProducts] = useState<Product[]>(StorageService.getProducts());
   const [categories, setCategories] = useState<CategoryInfo[]>(StorageService.getCategories());
@@ -200,6 +202,130 @@ export const HomePage: React.FC<HomePageProps> = ({
 
   const currentBanner = activeBanners[currentSlide] || activeBanners[0];
 
+  const handleBannerClick = (banner?: PromotionalBanner) => {
+    if (!banner) return;
+    const link = (banner.linkUrl || '').trim();
+    const titleLower = (banner.title || '').toLowerCase();
+    const tagLower = (banner.tag || '').toLowerCase();
+
+    // 1. External Web URL
+    if (link.startsWith('http://') || link.startsWith('https://')) {
+      window.open(link, '_blank');
+      return;
+    }
+
+    // 2. Partner Franchise Stores Directory
+    if (
+      link === 'partner-shops' ||
+      link === '#partner-shops' ||
+      link.includes('partner') ||
+      tagLower.includes('partner')
+    ) {
+      if (onNavigatePartnerShops) {
+        onNavigatePartnerShops();
+      } else if (onNavigateTab) {
+        onNavigateTab('partner-shops');
+      }
+      return;
+    }
+
+    // 3. B5 Coin Rewards / Referral / Wallet
+    if (
+      link === 'wallet' ||
+      link === '#wallet' ||
+      link === 'referral' ||
+      link === 'coins' ||
+      tagLower.includes('referral') ||
+      tagLower.includes('coin')
+    ) {
+      if (onNavigateTab) {
+        onNavigateTab('wallet');
+      }
+      return;
+    }
+
+    // 4. Specific Category Destination
+    let targetCat = '';
+    if (link.startsWith('category:')) {
+      targetCat = link.replace('category:', '').trim();
+    } else if (link.startsWith('#cat-') || link.startsWith('#category-')) {
+      targetCat = link.replace(/^#(cat-|category-)/, '').trim();
+    } else if (link === 'millets' || link === '#millets') {
+      targetCat = 'Traditional Millet Products';
+    } else {
+      const matchCat = categories.find(
+        (c) => c.name.toLowerCase() === link.toLowerCase() || c.id.toLowerCase() === link.toLowerCase()
+      );
+      if (matchCat) targetCat = matchCat.name;
+    }
+
+    if (targetCat) {
+      setSelectedCategory(targetCat);
+      setActiveTab('all');
+      setTimeout(() => {
+        const el = document.getElementById('products-section') || document.getElementById('catalog-anchor');
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 50);
+      return;
+    }
+
+    // 5. Specific Product Destination
+    if (link.startsWith('product:')) {
+      const prodId = link.replace('product:', '').trim();
+      const prod = products.find((p) => p.id === prodId);
+      if (prod) {
+        onSelectProduct(prod);
+        return;
+      }
+    }
+
+    // 6. Pongal Offer / Festival Special / Discount Deals
+    if (
+      link === 'offers' ||
+      link === '#offers' ||
+      link.includes('pongal') ||
+      link.includes('festival') ||
+      link.includes('discount') ||
+      titleLower.includes('pongal') ||
+      titleLower.includes('harvest') ||
+      titleLower.includes('festival') ||
+      titleLower.includes('offer') ||
+      tagLower.includes('festival') ||
+      tagLower.includes('harvest') ||
+      tagLower.includes('special') ||
+      tagLower.includes('offer')
+    ) {
+      setActiveTab('offers');
+      setSelectedCategory('All');
+      setTimeout(() => {
+        const el = document.getElementById('products-section') || document.getElementById('catalog-anchor');
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 50);
+      return;
+    }
+
+    // Default Fallback: Open Offers & scroll to Catalog
+    setActiveTab('offers');
+    setTimeout(() => {
+      const el = document.getElementById('products-section') || document.getElementById('catalog-anchor');
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 50);
+  };
+
+  const getBannerButtonLabel = (banner?: PromotionalBanner) => {
+    if (!banner) return 'Explore Offers';
+    const link = (banner.linkUrl || '').toLowerCase();
+    const title = (banner.title || '').toLowerCase();
+    const tag = (banner.tag || '').toLowerCase();
+
+    if (link.includes('partner') || tag.includes('partner')) return 'Find Partner Stores';
+    if (link.includes('wallet') || link.includes('coin') || tag.includes('coin')) return 'View B5 Rewards';
+    if (title.includes('pongal') || tag.includes('pongal')) return 'Explore Pongal Offers';
+    if (title.includes('festival') || tag.includes('festival') || link.includes('festival')) return 'Explore Festival Offers';
+    if (link.includes('category') || link.includes('millet') || title.includes('millet')) return 'Shop Traditional Millets';
+    return 'Explore Offers & Deals';
+  };
+
   return (
     <div className="pb-24 pt-2 max-w-7xl mx-auto px-3 sm:px-6 space-y-6">
       {/* Toast Alert */}
@@ -246,11 +372,15 @@ export const HomePage: React.FC<HomePageProps> = ({
 
       {/* Dynamic Festival Hero Promotional Banner Slider (CMS Connected) */}
       <div
-        className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-magizh-900 via-magizh-800 to-darkbrown-950 text-white p-5 sm:p-8 shadow-card border border-magizh-700/40 min-h-[220px] sm:min-h-[260px] flex flex-col justify-between group"
+        className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-magizh-900 via-magizh-800 to-darkbrown-950 text-white p-5 sm:p-8 shadow-card border border-magizh-700/40 min-h-[220px] sm:min-h-[260px] flex flex-col justify-between group cursor-pointer hover:border-amber-400/60 transition-all"
+        onClick={() => handleBannerClick(currentBanner)}
         onMouseEnter={() => setIsPaused(true)}
         onMouseLeave={() => setIsPaused(false)}
         onTouchStart={() => setIsPaused(true)}
         onTouchEnd={() => setIsPaused(false)}
+        title={`Click to view: ${currentBanner?.title || 'Festival Offer'}`}
+        role="button"
+        tabIndex={0}
       >
         {/* Background poster image if provided */}
         {currentBanner?.imageUrl && (
@@ -258,7 +388,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             <img
               src={currentBanner.imageUrl}
               alt={currentBanner.title || 'Promotional Poster'}
-              className="w-full h-full object-cover object-center brightness-60 transition-opacity duration-500"
+              className="w-full h-full object-cover object-center brightness-60 transition-opacity duration-500 group-hover:scale-102"
             />
             <div className="absolute inset-0 bg-gradient-to-r from-black/85 via-black/60 to-black/30" />
           </div>
@@ -282,17 +412,14 @@ export const HomePage: React.FC<HomePageProps> = ({
 
           <div className="flex flex-wrap items-center gap-3 mt-4">
             <button
-              onClick={() => {
-                if (currentBanner?.linkUrl) {
-                  window.location.hash = currentBanner.linkUrl;
-                } else {
-                  setSelectedCategory('Traditional Millet Products');
-                  setActiveTab('all');
-                }
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleBannerClick(currentBanner);
               }}
-              className="bg-white hover:bg-cream-100 text-magizh-900 font-extrabold text-xs sm:text-sm px-4 py-2 rounded-xl shadow-md transition-all flex items-center gap-1.5"
+              className="bg-white hover:bg-cream-100 text-magizh-900 font-extrabold text-xs sm:text-sm px-4 py-2 rounded-xl shadow-md transition-all flex items-center gap-1.5 cursor-pointer transform active:scale-95"
             >
-              <span>Explore Millets</span>
+              <span>{getBannerButtonLabel(currentBanner)}</span>
               <ChevronRight className="w-4 h-4" />
             </button>
 
@@ -313,8 +440,11 @@ export const HomePage: React.FC<HomePageProps> = ({
                   key={idx}
                   type="button"
                   aria-label={`Go to slide ${idx + 1}`}
-                  onClick={() => setCurrentSlide(idx)}
-                  className={`h-2 rounded-full transition-all ${
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setCurrentSlide(idx);
+                  }}
+                  className={`h-2 rounded-full transition-all cursor-pointer ${
                     idx === currentSlide ? 'w-6 bg-b5-400' : 'w-2 bg-white/40 hover:bg-white/70'
                   }`}
                 />
@@ -326,16 +456,22 @@ export const HomePage: React.FC<HomePageProps> = ({
               <button
                 type="button"
                 aria-label="Previous Banner"
-                onClick={handlePrevSlide}
-                className="w-8 h-8 rounded-full bg-black/40 hover:bg-black/60 backdrop-blur-md border border-white/20 flex items-center justify-center text-white transition-all"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handlePrevSlide();
+                }}
+                className="w-8 h-8 rounded-full bg-black/40 hover:bg-black/60 backdrop-blur-md border border-white/20 flex items-center justify-center text-white transition-all cursor-pointer"
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
               <button
                 type="button"
                 aria-label="Next Banner"
-                onClick={handleNextSlide}
-                className="w-8 h-8 rounded-full bg-black/40 hover:bg-black/60 backdrop-blur-md border border-white/20 flex items-center justify-center text-white transition-all"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleNextSlide();
+                }}
+                className="w-8 h-8 rounded-full bg-black/40 hover:bg-black/60 backdrop-blur-md border border-white/20 flex items-center justify-center text-white transition-all cursor-pointer"
               >
                 <ChevronRight className="w-4 h-4" />
               </button>
@@ -476,7 +612,7 @@ export const HomePage: React.FC<HomePageProps> = ({
       </div>
 
       {/* Product Section Filter Tabs */}
-      <div className="flex border-b border-cream-300 gap-4 sm:gap-6 text-xs sm:text-sm font-bold overflow-x-auto scrollbar-none">
+      <div id="products-section" className="flex border-b border-cream-300 gap-4 sm:gap-6 text-xs sm:text-sm font-bold overflow-x-auto scrollbar-none scroll-mt-20">
         <div
           onClick={() => setActiveTab('all')}
           className={`pb-2.5 border-b-2 transition-all flex items-center gap-1.5 cursor-pointer ${

@@ -507,6 +507,11 @@ function migrateSchema() {
     db.run("UPDATE partner_shops SET application_status = status WHERE status = 'approved' AND (application_status IS NULL OR application_status != 'approved')");
     // Standardize all historical redemptions/debits in coin_ledger as 'debit'
     db.run("UPDATE coin_ledger SET type = 'debit' WHERE type LIKE '%redemption%' OR type LIKE '%deduct%' OR type LIKE '%spent%'");
+    // Ensure all banners have robust click destination links
+    db.run("UPDATE promotional_banners SET link_url = 'offers' WHERE link_url IS NULL OR link_url = '' OR link_url = '#millets' OR title LIKE '%Pongal%' OR title LIKE '%Festival%'");
+    db.run("UPDATE promotional_banners SET link_url = 'partner-shops' WHERE link_url = '#partner-shops' OR title LIKE '%Partner%'");
+    db.run("UPDATE promotional_banners SET link_url = 'category:Traditional Millet Products' WHERE title LIKE '%Millet%' AND link_url != 'partner-shops'");
+    db.run("UPDATE promotional_banners SET link_url = 'wallet' WHERE title LIKE '%Reward%' OR title LIKE '%Bonus%'");
   } catch {}
 }
 

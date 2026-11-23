@@ -6364,19 +6364,51 @@ export const AdminPanel: React.FC = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2 items-center">
-                <div>
-                  <label className="block text-gray-700 font-bold mb-1">CTA Click Link (Optional)</label>
-                  <input
-                    type="text"
-                    value={editingBanner.linkUrl || ''}
-                    onChange={(e) => setEditingBanner({ ...editingBanner, linkUrl: e.target.value })}
-                    placeholder="#partner-shops or /categories"
-                    className="w-full p-2 bg-cream-50/50 border border-cream-300 rounded-xl text-xs"
-                  />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-center">
+                <div className="space-y-1.5 sm:col-span-2">
+                  <label className="block text-gray-700 font-bold">
+                    Banner Click Destination / Offer Page Link *
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <select
+                      value={
+                        ['offers', 'partner-shops', 'wallet', 'category:Traditional Millet Products', 'category:Organic Cold-Pressed Oils', 'category:Heritage Sweeteners & Jaggery', 'category:Traditional Rice & Grains', 'category:Healthy Snacks & Noodles'].includes(editingBanner.linkUrl || '')
+                          ? editingBanner.linkUrl
+                          : (editingBanner.linkUrl ? 'custom' : 'offers')
+                      }
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val !== 'custom') {
+                          setEditingBanner({ ...editingBanner, linkUrl: val });
+                        }
+                      }}
+                      className="w-full p-2 bg-cream-50/50 border border-cream-300 rounded-xl text-xs font-semibold"
+                    >
+                      <option value="offers">🎁 Festival / Pongal Offer Details Page (offers)</option>
+                      <option value="partner-shops">🏬 Partner Franchise Shops Directory (partner-shops)</option>
+                      <option value="wallet">🪙 B5 Coin Rewards & Referral Dashboard (wallet)</option>
+                      <option value="category:Traditional Millet Products">🌾 Traditional Millet Products (category)</option>
+                      <option value="category:Organic Cold-Pressed Oils">🛢️ Organic Cold-Pressed Oils (category)</option>
+                      <option value="category:Heritage Sweeteners & Jaggery">🍯 Heritage Sweeteners & Jaggery (category)</option>
+                      <option value="category:Traditional Rice & Grains">🍚 Traditional Rice & Grains (category)</option>
+                      <option value="category:Healthy Snacks & Noodles">🍜 Healthy Snacks & Noodles (category)</option>
+                      <option value="custom">🔗 Custom Internal Route or External Web Link</option>
+                    </select>
+
+                    <input
+                      type="text"
+                      value={editingBanner.linkUrl || ''}
+                      onChange={(e) => setEditingBanner({ ...editingBanner, linkUrl: e.target.value })}
+                      placeholder="e.g. offers, partner-shops, wallet, or https://..."
+                      className="w-full p-2 bg-cream-50/50 border border-cream-300 rounded-xl text-xs font-mono font-medium"
+                    />
+                  </div>
+                  <p className="text-[10px] text-gray-500">
+                    When customers tap this banner on the Homepage slider, it directly opens this target offer page.
+                  </p>
                 </div>
 
-                <div className="flex items-center pt-5">
+                <div className="flex items-center pt-2 sm:col-span-2">
                   <label className="flex items-center gap-2 cursor-pointer font-bold text-gray-700">
                     <input
                       type="checkbox"

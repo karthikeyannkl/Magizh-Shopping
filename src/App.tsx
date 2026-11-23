@@ -99,11 +99,17 @@ export default function App() {
   const [globalCelebration, setGlobalCelebration] = useState<CelebrationData | null>(null);
   const [isCelebrationOpen, setIsCelebrationOpen] = useState(false);
 
-  // Intro Brand Video Modal State (Shows once per session on home entry)
+  // Intro Brand Video Modal State (Shows only once on initial website opening before login)
   const [showIntroVideo, setShowIntroVideo] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
       try {
-        return !sessionStorage.getItem('magizh_intro_shown') && (window.location.pathname === '/' || window.location.pathname === '');
+        if (sessionStorage.getItem('magizh_intro_shown')) return false;
+        const customer = StorageService.getCustomerUser();
+        if (customer && !customer.isGuest && customer.id && customer.id !== 'cust-guest') {
+          return false;
+        }
+        const p = (window.location.pathname || '').toLowerCase();
+        return p === '/' || p === '' || p === '/home';
       } catch {
         return false;
       }
@@ -374,6 +380,7 @@ export default function App() {
             onAddToCart={handleAddToCart}
             onBuyNow={handleBuyNow}
             onNavigateCategory={() => navigateTo('home')}
+            onNavigateTab={(tab) => navigateTo(tab)}
             onNavigatePartnerShops={() => {
               if (!StorageService.isAuthenticated()) {
                 setAuthModalOpen(true);
